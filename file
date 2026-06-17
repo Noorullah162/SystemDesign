@@ -1,0 +1,28 @@
+Write a mail to client
+For management said me to prepare if incase future is any issue they will be throw me to you have done these thing so could help to write mail to 3 paragraph
+
+1. Para
+Development of automate mail of tims data insights tools is done till now  passenger count, energy consumption (total energy consumption, traction energy consumption, HVAC energy consumption, aps energy consumption), faults and we have tested for establishing is no internet or dongle to provide interest because based on internet it will be send mail
+
+
+2. Para
+To fetch data speed in tims insights tool to get fast need to change constraint in RTD database so please arrange a replica database (rtdtest) to we will change and compare the performance then we can change in main database.
+
+
+3. Para
+Based on discussion From client side to provide requirements document for energy consumption dashboard from your side then after we can arrange metting then finalize
+
+
+
+
+Dear Team,
+
+The development of the automated email functionality in the TIMS Data Insights Tool has been completed for the following modules: Passenger Count, Energy Consumption (Total Energy Consumption, Traction Energy Consumption, HVAC Energy Consumption, and APS Energy Consumption), and Fault Reports. We have also conducted testing for scenarios where internet connectivity is unavailable or the dongle connection is interrupted, as email delivery is dependent on internet availability. Further testing and validation activities are in progress.
+
+To improve data retrieval speed and overall performance in the TIMS Data Insights Tool, certain database constraints in the RTD database need to be modified. We request that a replica/test database (RTDTest) be arranged so that the required changes can be implemented and performance comparisons can be carried out. After validating the results in the test environment, we can proceed with the changes in the production database.
+
+As discussed, we request the client team to provide the detailed requirements document for the Energy Consumption Dashboard. Once the requirements are received and reviewed, we can arrange a meeting to discuss the details and finalize the dashboard design and implementation approach.
+
+Regards,
+Noorullah Mohammad
+Software Engineer
