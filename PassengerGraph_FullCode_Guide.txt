@@ -1,0 +1,425 @@
+PASSENGER TIME-SERIES GRAPH — FULL CODE GUIDE
+========================================================
+Target:
+- WPF .NET Framework 4.8.1
+- LiveChartsCore 2.0.0-rc2
+- LiveChartsCore.SkiaSharpView 2.0.0-rc2
+- LiveChartsCore.SkiaSharpView.WPF 2.0.0-rc2
+
+========================================================
+FILE 1: PassengerCountLineChartPoint.cs
+========================================================
+
+using System;
+
+namespace TIMSDataInsights.CustomDataTypes.DataTypes
+{
+    public class PassengerCountLineChartPoint
+    {
+        public double? X { get; set; }
+        public double? Y { get; set; }
+        public string TrainNo { get; set; }
+        public int TripId { get; set; }
+        public DateTime DDateTime { get; set; }
+        public string CurrentStation { get; set; }
+        public string NextStation { get; set; }
+        public int TotalPassenger { get; set; }
+    }
+}
+
+========================================================
+FILE 2: TimeSeriesPsgCntView.xaml
+========================================================
+
+Keep your existing Page XAML and change the CartesianChart to:
+
+<lvc:CartesianChart
+    x:Name="PassengerChart"
+    Series="{Binding Series, Mode=TwoWay}"
+    XAxes="{Binding XAxes, Mode=TwoWay}"
+    YAxes="{Binding YAxes, Mode=TwoWay}"
+    LegendPosition="Bottom"
+    ZoomMode="Y"
+    DrawMarginFrame="{Binding DrawMarginTimeSeriesFrame}"
+    TooltipFindingStrategy="CompareAllTakeClosest"
+    TooltipPosition="Top"
+    TooltipTextSize="13"/>
+
+========================================================
+FILE 3: TimeSeriesPsgCntView.xaml.cs
+========================================================
+
+using System.Windows;
+using System.Windows.Controls;
+using System.Windows.Input;
+
+namespace TIMSDataInsights.Views
+{
+    public partial class TimeSeriesPsgCntView : Page
+    {
+        private TimeSeriesPsgCntViewModel TimeSeriesPsgCntViewModelRef;
+
+        public TimeSeriesPsgCntView()
+        {
+            InitializeComponent();
+
+            TimeSeriesPsgCntViewModelRef =
+                new TimeSeriesPsgCntViewModel();
+
+            DataContext = TimeSeriesPsgCntViewModelRef;
+
+            PassengerChart.MouseMove += PassengerChart_MouseMove;
+            PassengerChart.MouseLeave += PassengerChart_MouseLeave;
+        }
+
+        private void PassengerChart_MouseMove(
+            object sender,
+            MouseEventArgs e)
+        {
+            Point mousePosition = e.GetPosition(PassengerChart);
+
+            // Do not compare mousePosition.X directly with StationIndex.
+            // Mouse coordinates are pixels; StationIndex is data coordinates.
+            // The exact RC2 coordinate conversion is required here.
+        }
+
+        private void PassengerChart_MouseLeave(
+            object sender,
+            MouseEventArgs e)
+        {
+            // Restore all lines here after the hover implementation is added.
+        }
+    }
+}
+
+========================================================
+FILE 4: ViewModel — important BuildSeries replacement
+========================================================
+
+Add to your ViewModel:
+
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using SkiaSharp;
+
+and add this property:
+
+public Dictionary<string, ISeries> SeriesMap { get; }
+    = new Dictionary<string, ISeries>();
+
+Replace your BuildSeries method with:
+
+private void BuildSeries(List<PassengerCountLineGraphPoint> points)
+{
+    TrainNames.Clear();
+    SeriesMap.Clear();
+
+    var palette = GetPalette();
+
+    var groups = points
+        .GroupBy(x => new { x.TrainNo, x.TripId })
+        .OrderBy(g => g.Min(x => x.DDateTime))
+        .ThenBy(g => g.Key.TrainNo)
+        .ThenBy(g => g.Key.TripId)
+        .ToList();
+
+    var series = new List<ISeries>();
+
+    LiveChartsCore.LiveCharts.Configure(config =>
+        config.HasMap<PassengerCountLineChartPoint>(
+            (point, index) =>
+                new LiveChartsCore.Kernel.Coordinate(
+                    point.X ?? 0,
+                    point.Y ?? 0))
+    );
+
+    int colorIndex = 0;
+
+    foreach (var group in groups)
+    {
+        string train = group.Key.TrainNo;
+        int tripId = group.Key.TripId;
+        string seriesKey = train + "_" + tripId;
+
+        if (!TrainNames.Contains(train))
+            TrainNames.Add(train);
+
+        var ordered = group
+            .OrderBy(x => x.StationIndex)
+            .ToList();
+
+        var values = ordered.Select(x =>
+            new PassengerCountLineChartPoint
+            {
+                X = x.StationIndex - 1,
+                Y = x.TotalPassenger,
+
+                TrainNo = train,
+                TripId = tripId,
+
+                DDateTime = x.DDateTime,
+
+                CurrentStation = x.CurrentStation,
+                NextStation = x.NextStation,
+
+                TotalPassenger = x.TotalPassenger
+            }).ToArray();
+
+        SKColor color =
+            palette[colorIndex % palette.Count];
+
+        colorIndex++;
+
+        var line =
+            new LineSeries<PassengerCountLineChartPoint>
+            {
+                Name = seriesKey,
+                Values = values,
+
+                GeometrySize = 7,
+                LineSmoothness = 0,
+                Fill = null,
+
+                Stroke = new SolidColorPaint(color)
+                {
+                    StrokeThickness = 3
+                },
+
+                XToolTipLabelFormatter = chartPoint =>
+                {
+                    var data =
+                        (PassengerCountLineChartPoint)
+                        chartPoint.Model;
+
+                    return
+                        $"Train: {data.TrainNo}  Trip: {data.TripId}
+" +
+                        $"Time: {data.DDateTime:yyyy-MM-dd HH:mm:ss.fff}
+" +
+                        $"{data.CurrentStation} → {data.NextStation}
+" +
+                        $"Passengers: {data.TotalPassenger}";
+                }
+            };
+
+        SeriesMap[seriesKey] = line;
+
+        series.Add(line);
+    }
+
+    Series = series.ToArray();
+}
+
+========================================================
+FILE 5: Unique color palette
+========================================================
+
+private List<SKColor> GetPalette()
+{
+    return new List<SKColor>
+    {
+        SKColors.Red,
+        SKColors.Blue,
+        SKColors.Green,
+        SKColors.Orange,
+        SKColors.Purple,
+        SKColors.DeepPink,
+        SKColors.Teal,
+        SKColors.Brown,
+        SKColors.DarkCyan,
+        SKColors.DarkGoldenrod,
+
+        SKColors.DarkGreen,
+        SKColors.DarkMagenta,
+        SKColors.DarkOrange,
+        SKColors.DarkRed,
+        SKColors.DarkViolet,
+        SKColors.CadetBlue,
+        SKColors.Crimson,
+        SKColors.Indigo,
+        SKColors.Olive,
+        SKColors.Sienna,
+
+        SKColors.SlateBlue,
+        SKColors.Tomato,
+        SKColors.MediumVioletRed,
+        SKColors.RoyalBlue,
+        SKColors.ForestGreen,
+        SKColors.Chocolate,
+        SKColors.MediumSeaGreen,
+        SKColors.DarkSlateBlue,
+        SKColors.Firebrick,
+        SKColors.DarkTurquoise
+    };
+}
+
+========================================================
+FILE 6: LoadAsync — your existing method
+========================================================
+
+Your existing LoadAsync is already suitable. Keep:
+
+DataTable StationAxiesTable =
+    _foreignServerDataMapper.GetStationAxisAsync(
+        Corridor,
+        Direction);
+
+DataTable TimeSeriesDataTable =
+    _foreignServerDataMapper.GetPassengerGraphDataAsync(
+        FromDateTime,
+        ToDateTime,
+        Corridor,
+        Direction);
+
+Then create PassengerCountLineGraphPoint with:
+
+TrainNo
+TripId
+StationIndex
+CurrentStation
+NextStation
+DDateTime
+TotalPassenger
+
+Then:
+
+BuildAxis(stations);
+BuildSeries(points);
+
+========================================================
+FILE 7: Station axis
+========================================================
+
+Keep your current BuildAxis:
+
+private void BuildAxis(List<StationAxisItem> stations)
+{
+    XAxes = new[]
+    {
+        new Axis
+        {
+            Name = "Stations",
+
+            Labels = stations
+                .OrderBy(x => x.StationIndex)
+                .Select(x => x.StationName)
+                .ToArray(),
+
+            LabelsRotation = 90,
+            TextSize = 10,
+            MinStep = 1,
+            UnitWidth = 1,
+            ForceStepToMin = true
+        }
+    };
+}
+
+========================================================
+FILE 8: IMPORTANT — hover highlighting
+========================================================
+
+Do NOT add newer LiveCharts examples such as:
+
+HoveredPointsChanged
+HoveredPoints
+DataPointer
+etc.
+
+Your project is using:
+
+LiveChartsCore 2.0.0-rc2
+
+and those APIs are not available in your installation.
+
+The current code above prepares everything needed:
+- every line has a unique TrainNo + TripId key
+- every point has full tooltip information
+- every line has its own color
+- StationIndex controls X-axis order
+
+The remaining hover feature must use the coordinate conversion API available in your exact RC2 WPF DLL.
+
+Do NOT do:
+
+mousePosition.X == point.X
+
+because:
+mousePosition.X = screen/chart pixels
+point.X = StationIndex
+
+========================================================
+FILE 9: Desired final hover behavior
+========================================================
+
+Normal:
+
+TS004 ─────────────────────
+TS012 ─────────────────────
+TS048 ─────────────────────
+TS031 ─────────────────────
+
+When hovering TS012:
+
+TS004 ─────────────────────   faded
+TS012 ═════════════════════   highlighted
+              ●
+TS048 ─────────────────────   faded
+TS031 ─────────────────────   faded
+
+Tooltip:
+
+Train: TS012  Trip: 1
+Time: 2026-06-08 07:12:13.500
+HITEC City → Durgam Cheruvu
+Passengers: 90
+
+========================================================
+FILE 10: Station ordering rule
+========================================================
+
+Do NOT use StationCode to determine graph order.
+
+Use:
+
+Corridor + Direction + StationIndex
+
+from:
+
+CorridorDirectionStations
+
+Example Corridor 3 Direction 1:
+
+1  Rai Durg
+2  HITEC City
+3  Durgam Cheruvu
+4  Madhapur
+...
+23 Secunderabad
+
+Therefore:
+
+X = StationIndex - 1
+
+is correct.
+
+========================================================
+FILE 11: 3 corridors
+========================================================
+
+The same architecture works for:
+
+Corridor 1 / Direction 0
+Corridor 1 / Direction 1
+
+Corridor 2 / Direction 0
+Corridor 2 / Direction 1
+
+Corridor 3 / Direction 0
+Corridor 3 / Direction 1
+
+because the StationIndex comes from CorridorDirectionStations.
+
+========================================================
+END
+========================================================
