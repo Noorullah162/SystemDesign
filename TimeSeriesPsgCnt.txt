@@ -1,0 +1,1027 @@
+TimeSeriesPsgCntViewModel.cs:
+using DataChangedNotifier;
+using EventsDelegator;
+using LiveChartsCore;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using SkiaSharp;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Data;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using TIMSDataInsights.CustomDataTypes.DataTypes;
+using TIMSDataInsights.CustomDataTypes.Enums;
+using TIMSDataInsights.CustomDataTypes.Interfaces;
+using TIMSDataInsights.DatabaseAccess;
+using TIMSDataInsights.MetroLocationServiceProvider.ViewModels;
+using static OxyPlot.Selection;
+using AppResourcesInterfaces = AppResources.CustomDataTypes.Interfaces;
+
+namespace TIMSDataInsights.ViewModels
+{
+    public class TimeSeriesPsgCntViewModel : PropertyChangedNotifier
+    {
+        private AppResourcesInterfaces.IForeignServerDataMapper _foreignServerDataMapper = null;
+        
+
+        private int _corridor = 3;
+        private int _direction = 1;
+        private DateTime _fromDateTime = new DateTime(2026, 6, 8, 7, 0, 0);
+        private DateTime _toDateTime = new DateTime(2026, 6, 8, 9, 0, 0);
+        private bool _isLoading;
+        private string _status = "Ready";
+
+        public ObservableCollection<string> TrainNames { get; } =
+            new ObservableCollection<string>();
+
+        private ISeries[] _Series;
+        public ISeries[] Series
+        {
+            get => _Series;
+            set
+            {
+                RaisePropertyChanged(ref _Series, value, "Series");
+            }
+        }
+
+        public Dictionary<string, ISeries> SeriesMap { get; } = new Dictionary<string, ISeries>();
+        private Axis[] _XAxes;
+        public Axis[] XAxes
+        {
+            get => _XAxes;
+            set
+            {
+                RaisePropertyChanged(ref _XAxes, value, "XAxes");
+            }
+        }
+
+        //public Axis[] YAxes 
+        //{ get; } =
+        //{
+        //    new Axis
+        //    {
+        //        Name = "Passenger Count",
+        //        Labeler = value => value.ToString("0")
+        //    }
+        //};
+
+        private Axis[] _YAxes;
+        public Axis[] YAxes
+        {
+            get => _YAxes;
+            set { RaisePropertyChanged(ref _YAxes, value, "YAxes"); }
+        }
+
+        public int Corridor 
+        { 
+            get 
+            { 
+                return _corridor; 
+            } 
+            set 
+            {                
+                RaisePropertyChanged(ref _corridor, value, "Corridor");
+            } 
+        }
+        public int Direction 
+        { 
+            get 
+            { return _direction; } 
+            set 
+            {
+                RaisePropertyChanged(ref _direction, value, "Direction");
+            } 
+        }
+        private DateTime _FromDateTime = DateTime.Now.Date;
+        public DateTime FromDateTime
+        {
+            get => _FromDateTime;
+            set
+            {
+                RaisePropertyChanged(ref _FromDateTime, value, "FromDateTime");
+                UpdateDateRangeDisplay();
+            }
+        }
+
+        private DateTime _ToDateTime = DateTime.Now.Date;
+        public DateTime ToDateTime
+        {
+            get => _ToDateTime;
+            set
+            {
+                RaisePropertyChanged(ref _ToDateTime, value, "ToDateTime");
+                UpdateDateRangeDisplay();
+            }
+        }
+        public bool IsLoading { 
+            get { return _isLoading; } 
+            set { RaisePropertyChanged(ref _isLoading, value, "IsLoading"); } }
+        public string Status { get { return _status; } set { RaisePropertyChanged(ref _status, value, "Status"); } }
+
+        /// <summary>
+        /// Gets or sets the display text for the date range button
+        /// </summary>
+        private string _DateRangeDisplayText = string.Empty;
+        
+        public string DateRangeDisplayText
+        {
+            get => _DateRangeDisplayText;
+            set
+            {
+                RaisePropertyChanged(ref _DateRangeDisplayText, value, "DateRangeDisplayText");
+            }
+        }
+
+        public Action DisplayDateTimeSpanWindow = null;
+        public Action TrainsComboDropDownCLosed
+        {
+            get;
+            set;
+        }
+        public Action TrainsComboDropDownOpened
+        {
+            get;
+            set;
+        }
+
+        public Action StationComboDropDownCLosed
+        {
+            get;
+            set;
+        }
+
+        public Action StationComboDropDownOpened { get; set; }
+
+        private Boolean _UplineMode;
+
+        //public event PropertyChangedEventHandler PropertyChanged;
+        public CommandsHandler DateTimeSpanButtonClickCommandHandler
+        {
+            get;
+            set;
+        }
+        public CommandsHandler TimeSeiresPsgCntViewLoadedEventCommandHandler { get; set; }
+
+        public Boolean UplineMode
+        {
+            get { return _UplineMode; }
+            set
+            {
+                RaisePropertyChanged(ref _UplineMode, value, "UplineMode");
+            }
+        }
+        
+        private Boolean _DownlineMode;
+        public Boolean DownlineMode
+        {
+            get { return _DownlineMode; }
+            set
+            {
+                RaisePropertyChanged(ref _DownlineMode, value, "DownlineMode");
+            }
+        }
+
+        private List<string> TrainsFilterSelectedItemsBeforeOpeningDropDown = null;
+
+        private List<string> StationsFilterSelectedItemsBeforeOpeningDropDown = null;
+
+        private ObservableCollection<string> _Corridors;
+        public ObservableCollection<string> Corridors
+        {
+            get
+            {
+                return _Corridors;
+            }
+            set
+            {
+                RaisePropertyChanged(ref _Corridors, value, "Corridors");
+            }
+        }
+
+        /// <summary>
+        /// Holds the list of selected corridors in Corridors multi selectiom combobox
+        /// </summary>
+        private int _CorridorsFilterSelectedIndex;
+
+        /// <summary>
+        /// Gets or sets the list of selected corridors in Corridors multi selectiom combobox
+        /// </summary>
+        public int CorridorsFilterSelectedIndex
+        {
+            get
+            {
+                return _CorridorsFilterSelectedIndex;
+            }
+            set
+            {
+                //passengerCountFilterOptionsbkup.SelectedTrain = _TrainsFilterSelctedItem;
+                RaisePropertyChanged(ref _CorridorsFilterSelectedIndex, value, "CorridorsFilterSelectedIndex");
+
+            }
+        }
+
+        /// <summary>
+        /// Contains the list of train numbers displaying on Trains multi selectiom combobox
+        /// </summary>
+        private ObservableCollection<IStringWithBool> _TrainsTimeSeries;
+
+        /// <summary>
+        /// Gets or sets the list of train numbers displaying on Trains multi selectiom combobox
+        /// </summary>
+        public ObservableCollection<IStringWithBool> TrainsTimeSeries
+        {
+            get
+            {
+                return _TrainsTimeSeries;
+            }
+            set
+            {
+                RaisePropertyChanged(ref _TrainsTimeSeries, value, "TrainsTimeSeries");
+            }
+        }
+
+        private ObservableCollection<IStringWithBool> _StationsItems;
+
+        public ObservableCollection<IStringWithBool> StationsItems
+        {
+            get
+            {
+                return _StationsItems;
+            }
+            set
+            {
+                RaisePropertyChanged(ref _StationsItems, value, "StationsItems");
+            }
+        }
+
+        /// <summary>
+        /// Holds the list of selected train numbers in Trains multi selectiom combobox
+        /// </summary>
+        private ObservableCollection<string> _TrainsFilterSelctedItems;
+
+        /// <summary>
+        /// Gets or sets the list of selected train numbers in Trains multi selectiom combobox
+        /// </summary>
+        public ObservableCollection<string> TrainsFilterSelctedItems
+        {
+            get
+            {
+                return _TrainsFilterSelctedItems;
+            }
+            set
+            {
+                if (value != null)
+                {
+                    value.CollectionChanged += LinesSeriesFiltersSelectionChanged;
+                }
+                RaisePropertyChanged(ref _TrainsFilterSelctedItems, value, "TrainsFilterSelctedItems");
+
+            }
+        }
+
+        private ObservableCollection<string> _StationsFilterSelctedItems;
+
+        public ObservableCollection<string> StationsFilterSelctedItems
+        {
+            get
+            {
+                return _StationsFilterSelctedItems;
+            }
+            set
+            {
+                if (value != null)
+                {
+                    value.CollectionChanged += StationItemsFiltersSelectionChanged;
+                }
+                RaisePropertyChanged(ref _StationsFilterSelctedItems, value, "StationsFilterSelctedItems");
+            }
+        }
+
+        public CommandsHandler ApplyButtonClickCommandHandler { get; set; }
+
+        public TimeSeriesPsgCntViewModel()
+        {
+            InitializeFields();
+            CommandHandlersRegistration();   
+        }
+        
+        private void InitializeFields()
+        {
+            _foreignServerDataMapper = new HMRCForeignServerDataMapper(new SQLDBInteraction());
+            TrainsComboDropDownCLosed = TrainsComboBoxDropDownClosed;
+            TrainsComboDropDownOpened = TrainsComboBoxDropDownOpen;
+            StationComboDropDownCLosed = StationsComboBoxDropDownClosed;
+            StationComboDropDownOpened = StationsComboBoxDropDownOpen;
+            _UplineMode = true;
+            _DownlineMode = false;
+            _Corridors = new ObservableCollection<string>();
+            _TrainsTimeSeries = new ObservableCollection<IStringWithBool>();
+            TrainsTimeSeries = new ObservableCollection<IStringWithBool>();
+            _StationsItems = new ObservableCollection<IStringWithBool>();
+            StationsItems = new ObservableCollection<IStringWithBool>();
+            
+        }
+
+        private void CommandHandlersRegistration()
+        {
+            DateTimeSpanButtonClickCommandHandler = new CommandsHandler(DateTimeSpanButtonClickEvent, CanExecuteButton);
+            ApplyButtonClickCommandHandler = new CommandsHandler(ApplyButtonEvent, CanExecuteButton);
+            TimeSeiresPsgCntViewLoadedEventCommandHandler = new CommandsHandler(TimeSeiresPsgCntViewLoadedEvent, (object obj) => true);
+        }
+
+        private void ApplyButtonEvent(object obj)
+        {
+            LoadAsync();
+            // IsTrainsSelectionChanged = false;
+        }
+
+        /// <summary>
+        /// TO check the list is null or empty
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="list"></param>
+        /// <returns>
+        /// returns true if the list either null or empty
+        /// else return false
+        /// </returns>
+        public static bool IsCollectionNullOrEmpty<T>(IEnumerable<T> list)
+        {
+            if (list != null && list.Count() > 0)
+            {
+                return false;
+            }
+            else
+            {
+                return true;
+            }
+        }
+
+        public void TrainsComboBoxDropDownClosed()
+        {
+            if (IsCollectionNullOrEmpty(TrainsFilterSelctedItems) == false)
+            {
+                if (AreBothListsAreEqual(TrainsFilterSelctedItems, TrainsFilterSelectedItemsBeforeOpeningDropDown) == false)
+                {
+                    UpdateSeriesVisibilityBasedOnSelectedTrains();
+                }
+                TrainsFilterSelectedItemsBeforeOpeningDropDown = null;
+            }
+            else
+            {
+                UpdateSeriesVisibilityBasedOnSelectedTrains();
+            }
+        }
+
+        /// <summary>
+        /// Called automatically when Trains Combobox drop down opens
+        /// </summary>
+        public void TrainsComboBoxDropDownOpen()
+        {
+            TrainsFilterSelectedItemsBeforeOpeningDropDown = new List<string>(TrainsFilterSelctedItems);
+        }
+
+        public void StationsComboBoxDropDownClosed()
+        {
+            if (IsCollectionNullOrEmpty(StationsFilterSelctedItems) == false)
+            {
+                if (AreBothListsAreEqual(StationsFilterSelctedItems, StationsFilterSelectedItemsBeforeOpeningDropDown) == false)
+                {
+                    UpdateStationsVisibility();
+                }
+                StationsFilterSelectedItemsBeforeOpeningDropDown = null;
+            }
+            else
+            {
+                UpdateStationsVisibility();
+                //UpdateSeriesVisibilityBasedOnSelectedTrains();
+            }
+        }
+
+        public void StationsComboBoxDropDownOpen()
+        {
+            StationsFilterSelectedItemsBeforeOpeningDropDown = new List<string>(StationsFilterSelctedItems);
+        }
+
+        /// <summary>
+        /// To compare all the items in both the lists with each other to know both the lists are equal of not
+        /// </summary>
+        /// <typeparam name="T"></typeparam>
+        /// <param name="list1"></param>
+        /// <param name="list2"></param>
+        /// <returns>
+        /// returns true if both the lists are same
+        /// else return false
+        /// </returns>
+        private bool AreBothListsAreEqual<T>(IEnumerable<T> list1, IEnumerable<T> list2)
+        {
+            bool arebothequal = false;
+            ///Both the list should not be empty and length(count) must be same
+            if (list1 != null && list2 != null && list1.Count() == list2.Count())
+            {
+                ///Taking one item in list1 and comparing it with all the elements in list2
+                foreach (var item1 in list1)
+                {
+                    arebothequal = false;
+                    ///iterating list2
+                    foreach (var item2 in list2)
+                    {
+                        if (item1.Equals(item2))
+                        {
+                            arebothequal = true;
+                            break;
+                        }
+
+                    }
+                    if (arebothequal == false)
+                    {
+                        return arebothequal;
+                    }
+                }
+            }
+            return arebothequal;
+        }
+
+        /// <summary>
+        /// Updates the date range display text based on current FromDate and ToDate values
+        /// </summary>
+        private void UpdateDateRangeDisplay()
+        {
+            try
+            {
+                if (FromDateTime != null && ToDateTime != null)
+                {
+                    string fromDisplay = $"{FromDateTime:MMM dd, yyyy HH:mm:ss}";
+                    string toDisplay = $"{ToDateTime:MMM dd, yyyy HH:mm:ss}";
+                    DateRangeDisplayText = $"{fromDisplay} - {toDisplay}";
+                }
+                else
+                {
+                    DateRangeDisplayText = "Select Date Range";
+                }
+                //SelectionItems.Clear();
+            }
+            catch
+            {
+                DateRangeDisplayText = "Select Date Range";
+            }
+        }
+
+        private bool CanExecuteButton(object obj)
+        {
+            return true;
+        }
+
+        private void DateTimeSpanButtonClickEvent(object eventArgs)
+        {
+            DisplayDateTimeSpanWindow?.Invoke();
+        }
+
+        private async void TimeSeiresPsgCntViewLoadedEvent(object obj)
+        {
+            //FromDateTime = DateTime.Today.AddDays(-1).AddHours(07).AddMinutes(00).AddSeconds(00);
+            //ToDateTime = DateTime.Today.AddDays(-1).AddHours(08).AddMinutes(00).AddSeconds(00);
+            FromDateTime = new DateTime(2026, 6, 8, 7, 0, 0);
+            ToDateTime = new DateTime(2026, 6, 8, 8, 0, 0);
+            IList<string> corridors = await Task.Run(() => _foreignServerDataMapper.GetUICorridors());
+            Corridors = new ObservableCollection<string>(corridors);
+            UplineMode = true;
+            DownlineMode = false;
+            LoadAsync();
+        }
+
+        public List<string> AllStations { get; set; } = new List<string>();
+        public void LoadAsync()
+        {
+            if (IsLoading) return;
+
+            IsLoading = true;
+            Status = "Loading passenger data...";
+
+            try
+            {
+                int DirectionMode = UplineMode ? 0 : 1;
+                DataTable StationAxiesTable = _foreignServerDataMapper.GetStationAxisAsync(CorridorsFilterSelectedIndex+1, DirectionMode);
+                DataTable TimeSeriesDataTable = _foreignServerDataMapper.GetPassengerGraphDataAsync(
+                    FromDateTime, ToDateTime, CorridorsFilterSelectedIndex+1, DirectionMode);
+                
+                List<StationAxisItem> stations = new List<StationAxisItem>();
+                foreach (DataRow row in StationAxiesTable.Rows)
+                {
+                    var station = new StationAxisItem
+                    {
+                        StationIndex = Convert.ToInt32(row["StationIndex"]),
+                        StationName = row["StationName"].ToString()
+                    };
+                    stations.Add(station);
+                }
+
+                List<PassengerCountLineGraphPoint> points = new List<PassengerCountLineGraphPoint>();
+                foreach (DataRow row in TimeSeriesDataTable.Rows)
+                {
+                    var point = new PassengerCountLineGraphPoint
+                    {
+                        TrainNo = row["TrainNo"].ToString(),
+                        TripId = Convert.ToInt32(row["TripId"]),
+                        StationIndex = Convert.ToInt32(row["StationIndex"]),
+                        CurrentStation = row["CurrentStation"].ToString(),
+                        NextStation = row["NextStation"].ToString(),
+                        DDateTime = Convert.ToDateTime(row["DDateTime"]),
+                        TotalPassenger = Convert.ToInt32(row["TotalPassenger"])
+                    };
+                    points.Add(point);
+                }
+
+                //await Task.WhenAll(stationsTask, dataTask);
+
+                //var stations = await stationsTask;
+                //var points = await dataTask;
+
+                BuildAxis(stations);
+                BuildSeries(points);
+
+                AllStations = stations.OrderBy(x => x.StationIndex)
+                                      .Select(x => x.StationName)
+                                      .ToList();
+
+                Status = string.Format("{0} train/trip lines, {1} points loaded.",
+                    Series.Length, points.Count);
+            }
+            catch (OperationCanceledException)
+            {
+                Status = "Refresh cancelled.";
+            }
+            catch (Exception ex)
+            {
+                Status = "Error: " + ex.Message;
+            }
+            finally
+            {
+                IsLoading = false;
+            }
+        }
+
+        private void BuildAxis(List<StationAxisItem> stations)
+        {
+            YAxes = new Axis[]
+            {
+                new Axis
+                {
+                    Name = "Passenger Count",
+                    MinLimit = 0
+                }
+            };
+
+            XAxes = new[]
+            {
+                new Axis
+                {
+                    Name = "Stations",
+                    Labels = stations.OrderBy(x => x.StationIndex)
+                                     .Select(x => x.StationName)
+                                     .ToArray(),
+                    LabelsRotation = 90,
+                    TextSize = 10,
+                    MinStep = 1,
+                    UnitWidth=1,ForceStepToMin=true,
+                }
+            };
+
+            StationsItems.Clear();
+            StationsItems = new ObservableCollection<IStringWithBool>(
+                stations.OrderBy(x => x.StationIndex)
+                        .Select(x => new StringWithBool(x.StationName, true))
+            );
+        }
+
+        private void UpdateStationsVisibility()
+        {
+            
+        }
+        private void UpdateSeriesVisibilityBasedOnSelectedTrains()
+        {
+            if (Series == null) return;
+            foreach (var line in Series.OfType<LineSeries<PassengerCountLineChartPoint>>())
+            {
+                var target = TrainsFilterSelctedItems.FirstOrDefault(x =>
+                    x?.Replace("-", "").Replace(":", "").Replace(" ", "_") == line.Name?.ToString());
+
+                if (target != null)
+                {
+                    line.IsHoverable = true;
+                    line.IsVisible = true;
+                }
+                else
+                {
+                    line.IsHoverable = false;
+                    line.IsVisible = false;
+                }
+            }
+        }
+
+        private void LinesSeriesFiltersSelectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (IsCollectionNullOrEmpty(TrainsFilterSelctedItems) == false)
+            {
+                UpdateSeriesVisibilityBasedOnSelectedTrains();
+            }
+        }
+
+        private void StationItemsFiltersSelectionChanged(object sender, NotifyCollectionChangedEventArgs e)
+        {
+            if (IsCollectionNullOrEmpty(StationsFilterSelctedItems) == false)
+            {
+                UpdateStationsVisibility();
+            }
+        }
+
+        private void BuildSeries(List<PassengerCountLineGraphPoint> points)
+        {
+            TrainNames.Clear();
+            TrainsTimeSeries.Clear();
+            var palette = GetPalette();
+
+            var groups = points.OrderBy(x => x.DDateTime).GroupBy(x => new { x.TrainNo, x.TripId })
+                               .ToList();
+
+            //var groups = points.GroupBy(x => new { x.TrainNo, x.TripId })
+            //        .OrderBy(g => g.Min(x => x.StationIndex))
+            //        .ThenBy(g => g.Key.TrainNo)
+            //        .ThenBy(g => g.Key.TripId)
+            //        .ToList();
+
+            var series = new List<ISeries>();
+            LiveChartsCore.LiveCharts.Configure(config =>
+                config.HasMap<TIMSDataInsights.CustomDataTypes.DataTypes.PassengerCountLineChartPoint>((point, index) =>
+                    new LiveChartsCore.Kernel.Coordinate(point.X ?? 0, point.Y ?? 0))
+            );
+            foreach (var group in groups)
+            {
+                var train = group.Key.TrainNo;
+                var tripId = group.Key.TripId;
+                var ordered = group.OrderBy(x => x.StationIndex).ToList();
+                //var ddatetime = group.Key.DDatetime;
+
+                if (!TrainNames.Contains(train))
+                    TrainNames.Add(train);
+                DateTime datetime = ordered[0].DDateTime;
+                
+                TrainsTimeSeries.Add(new StringWithBool(train + " " + datetime.ToString("yyyy-MM-dd HH:mm"), true));
+                // Use LiveCharts Cartesian points. StationIndex - 1 aligns
+                // with the zero-based Labels array.
+                //var values = ordered.Select(x =>
+                //    new LiveChartsCore.Defaults.ObservablePoint(
+                //        x.StationIndex - 1,
+                //        x.TotalPassenger)).ToArray();
+
+                var values = ordered.Select(x => new TIMSDataInsights.CustomDataTypes.DataTypes.PassengerCountLineChartPoint
+                {
+                    X = x.StationIndex - 1,
+                    Y = x.TotalPassenger,
+                    TrainNo = train,
+                    DDateTime = x.DDateTime,
+                    CurrentStation = x.CurrentStation
+                }).ToArray();
+
+                //var line = new LineSeries<LiveChartsCore.Defaults.ObservablePoint>
+                //{
+                //    Name = train + "_" + tripId,
+                //    Values = values,
+                //    GeometrySize = 7,
+                //    LineSmoothness = 0,
+                //    Fill = null,  
+                //};
+                //train + datetime.ToString("_yyyyMMddHHmm")
+                var line = new LineSeries<TIMSDataInsights.CustomDataTypes.DataTypes.PassengerCountLineChartPoint>
+                {                    
+                    Name = train + datetime.ToString("_yyyyMMdd_HHmm"),
+                    Values = values,
+                    GeometrySize = 7,
+                    LineSmoothness = 0,
+                    Fill = null,
+                    XToolTipLabelFormatter = (chartPoint) =>
+                    {
+                        var data = (TIMSDataInsights.CustomDataTypes.DataTypes.PassengerCountLineChartPoint)chartPoint.Model;
+                        string formattedTime = data.DDateTime.ToString("yyyy-MM-dd HH:mm");
+
+                        // Line 1: [TrainNo] [DDatetime]
+                        // Line 2: [StationName] - [PassengerCount]
+                        return $"{data.CurrentStation} {formattedTime}";
+                    }
+
+
+                    //// HOVER HIGHLIGHT STYLE
+                    //// When hovered, the line turns into a bold, thick, dark blue/black line
+                    //GeometryHoverPaint = new SolidColorPaint(SKColors.DarkBlue)
+                    //{
+                    //    StrokeThickness = 5 // Significantly thicker line on hover
+                    //}
+                    // FIX: Replaced TooltipLabelFormatter with YToolTipLabelFormatter
+                    //YToolTipLabelFormatter = (chartPoint) =>
+                    //{
+                    //    var data = (TIMSDataInsights.CustomDataTypes.DataTypes.PassengerCountLineChartPoint)chartPoint.Model;
+                    //    string formattedTime = data.DDateTime.ToString("yyyy-MM-dd HH:mm");
+
+                    //    // Line 1: [TrainNo] [DDatetime]
+                    //    // Line 2: [StationName] - [PassengerCount]
+                    //    return $"{data.TrainNo} {formattedTime}{Environment.NewLine}" +
+                    //           $"{data.CurrentStation} - {chartPoint.PrimaryValue}";
+                    //}
+                };
+
+                series.Add(line);
+            }
+
+            Series = series.ToArray();
+
+            //var result = new List<ISeries>();
+
+            //for (int i = 0; i < groups.Count; i++)
+            //{
+            //    var g = groups[i];
+
+            //    var values = g.OrderBy(x => x.StationIndex)
+            //        .ThenBy(x => x.DDateTime)
+            //        .Select(x => new PassengerCountLineChartPoint
+            //        {
+            //            X = x.StationIndex - 1,
+            //            Y = x.TotalPassenger,
+            //            TrainNo = x.TrainNo,
+            //            TripId = x.TripId,
+            //            StationIndex = x.StationIndex,
+            //            DDateTime = x.DDateTime,
+            //            CurrentStation = x.CurrentStation,
+            //            NextStation = x.NextStation,
+            //            PassengerCount = x.TotalPassenger
+            //        }).ToArray();
+
+            //    var color = palette[i % palette.Count];
+
+            //    result.Add(new LineSeries<PassengerCountLineChartPoint>
+            //    {
+            //        Name = g.Key.TrainNo + " / Trip " + g.Key.TripId,
+            //        Values = values,
+            //        Stroke = new SolidColorPaint(color, 3),
+            //        Fill = null,
+            //        GeometrySize = 9,
+            //        LineSmoothness = 0,
+            //        IsHoverable = true,
+            //        TooltipLabelFormatter = cp =>
+            //        {
+            //            var p = cp.Model;
+            //            return p == null ? "" :
+            //                string.Format(
+            //                    "Train: {0} / Trip {1}\nTime: {2:dd-MM-yyyy HH:mm:ss.fff}\n{3} → {4}\nPassenger Count: {5}",
+            //                    p.TrainNo, p.TripId, p.DDateTime,
+            //                    p.CurrentStation, p.NextStation,
+            //                    p.PassengerCount);
+            //        }
+            //    });
+            //}
+
+            //Series = result.ToArray();
+            //Status = groups.Count + " train/trip lines, " +
+            //         points.Count + " points loaded.";
+
+            //OnPropertyChanged(nameof(Series));
+        }
+
+        //private void BuildSeries(List<PassengerCountLineGraphPoint> points)
+        //{
+        //    TrainNames.Clear();
+        //    SeriesMap.Clear();
+
+        //    var palette = GetPalette();
+
+        //    var groups = points
+        //        .GroupBy(x => new { x.TrainNo, x.TripId })
+        //        .OrderBy(g => g.Min(x => x.DDateTime))
+        //        .ThenBy(g => g.Key.TrainNo)
+        //        .ThenBy(g => g.Key.TripId)
+        //        .ToList();
+
+        //    var series = new List<ISeries>();
+
+        //    LiveChartsCore.LiveCharts.Configure(config =>
+        //        config.HasMap<PassengerCountLineChartPoint>(
+        //            (point, index) =>
+        //                new LiveChartsCore.Kernel.Coordinate(
+        //                    point.X ?? 0,
+        //                    point.Y ?? 0))
+        //    );
+
+        //    int colorIndex = 0;
+
+        //    foreach (var group in groups)
+        //    {
+        //        string train = group.Key.TrainNo;
+        //        int tripId = group.Key.TripId;
+        //        string seriesKey = train + "_" + tripId;
+
+        //        if (!TrainNames.Contains(train))
+        //            TrainNames.Add(train);
+
+        //        var ordered = group
+        //            .OrderBy(x => x.StationIndex)
+        //            .ToList();
+
+        //        var values = ordered.Select(x =>
+        //            new PassengerCountLineChartPoint
+        //            {
+        //                X = x.StationIndex - 1,
+        //                Y = x.TotalPassenger,
+
+        //                TrainNo = train,
+        //                TripId = tripId,
+
+        //                DDateTime = x.DDateTime,
+
+        //                CurrentStation = x.CurrentStation,
+        //                NextStation = x.NextStation,
+
+        //                PassengerCount = x.TotalPassenger
+        //            }).ToArray();
+
+        //        SKColor color =
+        //            palette[colorIndex % palette.Count];
+
+        //        colorIndex++;
+
+        //        var line =
+        //            new LineSeries<PassengerCountLineChartPoint>
+        //            {
+        //                Name = seriesKey,
+        //                Values = values,
+
+        //                GeometrySize = 7,
+        //                LineSmoothness = 0,
+        //                Fill = null,
+
+        //                Stroke = new SolidColorPaint(color)
+        //                {
+        //                    StrokeThickness = 3
+        //                },
+
+        //                XToolTipLabelFormatter = chartPoint =>
+        //                {
+        //                    var data =
+        //                        (PassengerCountLineChartPoint)
+        //                        chartPoint.Model;
+
+        //                    return
+        //                        $"Train: {data.TrainNo}  Trip: {data.TripId}" +
+        
+        //                        $"Time: {data.DDateTime:yyyy-MM-dd HH:mm:ss.fff}" +
+        
+        //                        $"{data.CurrentStation} → {data.NextStation}" +
+        
+        //                        $"Passengers: {data.PassengerCount}";
+        //                }
+        //            };
+
+        //        SeriesMap[seriesKey] = line;
+
+        //        series.Add(line);
+        //    }
+
+        //    Series = series.ToArray();
+        //}
+
+        private List<SKColor> GetPalette()
+        {
+            return new List<SKColor>
+    {
+        SKColors.Red,
+        SKColors.Blue,
+        SKColors.Green,
+        SKColors.Orange,
+        SKColors.Purple,
+        SKColors.DeepPink,
+        SKColors.Teal,
+        SKColors.Brown,
+        SKColors.DarkCyan,
+        SKColors.DarkGoldenrod,
+
+        SKColors.DarkGreen,
+        SKColors.DarkMagenta,
+        SKColors.DarkOrange,
+        SKColors.DarkRed,
+        SKColors.DarkViolet,
+        SKColors.CadetBlue,
+        SKColors.Crimson,
+        SKColors.Indigo,
+        SKColors.Olive,
+        SKColors.Sienna,
+
+        SKColors.SlateBlue,
+        SKColors.Tomato,
+        SKColors.MediumVioletRed,
+        SKColors.RoyalBlue,
+        SKColors.ForestGreen,
+        SKColors.Chocolate,
+        SKColors.MediumSeaGreen,
+        SKColors.DarkSlateBlue,
+        SKColors.Firebrick,
+        SKColors.DarkTurquoise
+    };
+        }
+
+        public DrawMarginFrame DrawMarginTimeSeriesFrame => new DrawMarginFrame
+        {
+            Stroke = new SolidColorPaint(SKColor.Parse("#D3D3D3"), 1)
+        };
+
+        public void Dispose()
+        {
+        }
+
+        //protected void OnPropertyChanged([CallerMemberName] string propertyName = null)
+        //{
+        //    PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(propertyName));
+        //}
+        
+    }
+}
+
+TimeSeriesPsgCntView.xaml
+    <!--#region Page Chart Start-->
+    <Grid Grid.Row="2" Margin="15 5 15 10">
+        <Border Background="White" CornerRadius="8" Padding="0" Margin="0,0,0,0" BorderBrush="#E1E4E8" BorderThickness="1">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Auto" CanContentScroll="False">
+                <Grid Margin="10 10 10 10">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="50 0 0 0" HorizontalAlignment="Right">
+                        <TextBlock Text="Station Selection: "
+                           Margin="0 10 0 0"
+                           Foreground="black"
+                           Width="Auto"
+                           FontSize="16"      
+                           HorizontalAlignment="Right" />
+                        <UC:MultiSelectComboBox x:Name="StsationCombobox"
+                            Foreground="Black"
+                            HorizontalAlignment="Right"
+                            Margin="10 5 0 0"
+                            Height="40"
+                            DropDownClosed="{Binding StationComboDropDownCLosed}"
+                            DropDownOpened="{Binding StationComboDropDownOpened}"
+                            IsSelectAllEnabled="True"
+                            ItemSource="{Binding StationsItems,Mode=TwoWay}"
+                            SelectedItems="{Binding StationsFilterSelctedItems,Mode=TwoWay}"
+                            Width="200" />
+                        <TextBlock Text="Line Series Selection: "
+                                   Margin="0 10 0 0"
+                           Foreground="black"
+                           Width="Auto"
+                           FontSize="16"      
+                           HorizontalAlignment="Right" />
+                        <UC:MultiSelectComboBox x:Name="TrainsCombobox"
+                                            Foreground="Black"
+                            HorizontalAlignment="Right"
+                            Margin="10 5 0 0"
+                            Height="40"
+                            DropDownClosed="{Binding TrainsComboDropDownCLosed}"
+                            DropDownOpened="{Binding TrainsComboDropDownOpened}"
+                            IsSelectAllEnabled="True"
+                            ItemSource="{Binding TrainsTimeSeries,Mode=TwoWay}"
+                            SelectedItems="{Binding TrainsFilterSelctedItems,Mode=TwoWay}"
+                            Width="250" />
+                    </StackPanel>
+                    <lvc:CartesianChart Grid.Row="1"
+                        x:Name="TimeSeriesChart"
+                        Series="{Binding Series, Mode=TwoWay}"
+                        XAxes="{Binding XAxes, Mode=TwoWay}"
+                        YAxes="{Binding YAxes, Mode=TwoWay}"
+                        ZoomMode="Y"
+                        DrawMarginFrame ="{Binding DrawMarginTimeSeriesFrame}" 
+                        TooltipFindingStrategy="CompareAllTakeClosest"
+                        TooltipPosition="Top"
+                        TooltipTextSize="13"
+                    />
+                </Grid>
+            </ScrollViewer>
+        </Border>
+    </Grid>
+
+    <!--#endregion Page Chart End-->
+    
+    
+
+</Grid>
+<Interactivity:Interaction.Triggers>
+    <Interactivity:EventTrigger EventName="Loaded">
+        <Interactivity:InvokeCommandAction 
+        Command="{Binding TimeSeiresPsgCntViewLoadedEventCommandHandler}"
+        CommandParameter="{Binding}"
+        />
+    </Interactivity:EventTrigger>
+</Interactivity:Interaction.Triggers>
