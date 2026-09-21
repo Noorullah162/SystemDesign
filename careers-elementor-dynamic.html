@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Careers | Asa Bhanu Technical Services Limited</title>
+<meta name="description" content="Explore career opportunities at Asa Bhanu Technical Services Limited across engineering, rail transportation, power, software, automation and digital technologies.">
+
+<style>
+:root{
+  --navy:#12345b;--navy-dark:#0d2948;--blue:#1d4f7d;
+  --orange:#f4a623;--orange-dark:#dc8d0c;--text:#263746;
+  --muted:#6f7b86;--light:#f6f7f8;--border:#e1e5e8;
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;color:var(--text);line-height:1.6}
+a{text-decoration:none}
+.container{width:min(1180px,calc(100% - 40px));margin:auto}
+
+/* HERO */
+.hero{background:linear-gradient(135deg,#0d2948,#12345b 60%,#173e67);color:#fff;min-height:440px;display:flex;align-items:center;overflow:hidden}
+.hero-grid{display:grid;grid-template-columns:1.05fr .95fr;gap:60px;align-items:center}
+.eyebrow,.kicker{font-size:11px;font-weight:700;letter-spacing:1.6px;text-transform:uppercase}
+.eyebrow{color:var(--orange);margin-bottom:16px}
+.hero h1{font-size:clamp(38px,5vw,64px);line-height:1.08;margin:0 0 20px;letter-spacing:-1.5px}
+.hero h1 span{color:var(--orange)}
+.hero p{max-width:650px;color:#d4dce4;font-size:16px;line-height:1.8}
+.actions{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
+.btn{display:inline-block;padding:12px 22px;border-radius:2px;font-size:13px;font-weight:700;cursor:pointer;border:0}
+.primary{background:var(--orange);color:#172d43}
+.primary:hover{background:#ffb63f}
+.outline{border:1px solid #8ea0b1;color:#fff;background:transparent}
+
+/* ENGINEERING GRAPHIC */
+.roadmap{position:relative;height:280px}
+.roadmap:before{content:"";position:absolute;left:52%;top:20px;height:215px;border-left:1px solid #ffffff33}
+.line{position:absolute;border-top:1px solid #f4a62388}
+.l1{width:115px;left:18%;top:75px}.l2{width:145px;left:52%;top:130px}.l3{width:95px;left:48%;top:205px}
+.point{position:absolute;width:9px;height:9px;border:2px solid var(--navy);border-radius:50%;background:var(--orange);box-shadow:0 0 0 1px var(--orange)}
+.p1{left:18%;top:70px}.p2{left:52%;top:125px}.p3{left:78%;top:75px}.p4{left:48%;top:200px}
+.label{position:absolute;color:#ffffff88;font-size:9px;text-transform:uppercase;letter-spacing:1px}
+.lb1{left:12%;top:87px}.lb2{left:55%;top:143px}.lb3{left:72%;top:91px}.lb4{left:41%;top:218px}
+
+/* STATS */
+.stats{background:var(--navy-dark);color:#fff}
+.stats-grid{display:grid;grid-template-columns:repeat(4,1fr)}
+.stat{padding:22px 28px;border-right:1px solid #ffffff1a}
+.stat:last-child{border:0}.number{font-size:26px;font-weight:700}.stat small{color:#ffffff99;text-transform:uppercase;letter-spacing:.8px;font-size:10px}
+
+/* SECTIONS */
+.section{padding:76px 0}.kicker{color:var(--orange-dark);margin-bottom:8px}
+.heading{max-width:720px;margin-bottom:32px}.heading h2{font-size:40px;line-height:1.15;color:var(--navy);margin:0 0 10px}.heading p{color:var(--muted);font-size:15px;margin:0}
+
+/* SEARCH */
+.tools{display:grid;grid-template-columns:1.3fr 1fr 1fr;gap:12px;margin-bottom:20px}
+.tools input,.tools select{width:100%;padding:13px 15px;border:1px solid var(--border);background:#fff;color:var(--text);outline:0;border-radius:2px}
+.tools input:focus,.tools select:focus{border-color:var(--blue)}
+.count{font-size:12px;color:var(--muted);margin-bottom:14px}
+
+/* JOBS */
+.group{border:1px solid var(--border);margin-bottom:22px;background:#fff}
+.group-head{padding:16px 18px;background:#f8f9fa;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+.group-title{display:flex;gap:11px;align-items:center;color:var(--navy);font-size:15px;font-weight:700}
+.icon{width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:var(--navy);color:var(--orange)}
+.group-count{font-size:11px;color:var(--muted)}
+.job{border-bottom:1px solid var(--border)}.job:last-child{border:0}
+.summary{display:grid;grid-template-columns:1fr auto;gap:20px;padding:18px}
+.job h3{font-size:14px;color:var(--navy);margin:0 0 5px}.meta{display:flex;gap:14px;flex-wrap:wrap;color:var(--muted);font-size:11px}
+.job-actions{display:flex;align-items:center;gap:8px}.view{border:0;background:transparent;color:var(--blue);font-size:12px;font-weight:700;cursor:pointer;padding:8px}.apply{border:0;background:var(--orange);color:#172d43;padding:9px 15px;font-size:11px;font-weight:700;cursor:pointer;border-radius:2px}
+.details{display:none;padding:0 18px 20px;background:#fbfcfd}.job.open .details{display:block}.details-inner{border-left:2px solid var(--orange);padding:5px 0 4px 18px}.details h4{font-size:12px;color:var(--navy);margin:14px 0 6px}.details p,.details li{font-size:12px;color:var(--muted)}.details ul{padding-left:18px}
+
+/* LIFE */
+.life{background:var(--light)}.life-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}.life-card{background:#fff;border:1px solid var(--border);padding:26px;min-height:190px}.life-icon{width:40px;height:40px;display:flex;align-items:center;justify-content:center;background:#f4a6231f;color:var(--orange-dark);margin-bottom:16px}.life-card h3{font-size:16px;color:var(--navy);margin:0 0 8px}.life-card p{font-size:13px;color:var(--muted);margin:0}
+
+/* APPLICATION */
+.general{background:var(--navy);color:#fff;padding:50px 0}.general-inner{display:grid;grid-template-columns:1fr auto;gap:40px;align-items:center}.general h2{color:#fff;margin:0 0 9px;font-size:27px}.general p{margin:0;color:#ffffffad;font-size:13px;max-width:700px}
+
+/* WARNING */
+.warning{padding:45px 0 70px}.warning-box{border-left:3px solid var(--orange);background:#f7f7f5;padding:22px 24px}.warning-box h3{font-size:14px;color:var(--navy);margin:0 0 7px}.warning-box p{font-size:12px;color:var(--muted);margin:0}
+
+/* MODAL */
+.modal{display:none;position:fixed;z-index:99999;inset:0;background:#051423b8;align-items:center;justify-content:center;padding:20px}.modal.active{display:flex}.modal-content{width:min(620px,100%);max-height:90vh;overflow:auto;background:#fff;padding:30px;position:relative}.close{position:absolute;right:16px;top:10px;border:0;background:transparent;font-size:27px;color:var(--muted);cursor:pointer}.modal h2{margin:0 0 6px;color:var(--navy)}.modal-desc{font-size:13px;color:var(--muted);margin-bottom:20px}.form{display:grid;gap:13px}.form label{font-size:12px;font-weight:600;color:var(--navy)}.form input,.form textarea{display:block;width:100%;margin-top:5px;padding:11px 12px;border:1px solid var(--border)}.form textarea{min-height:100px}.note{font-size:10px;color:var(--muted)}
+
+/* RESPONSIVE */
+@media(max-width:900px){
+.hero-grid{grid-template-columns:1fr}.roadmap{display:none}.stats-grid{grid-template-columns:repeat(2,1fr)}
+.tools{grid-template-columns:1fr}.life-grid{grid-template-columns:1fr}.general-inner{grid-template-columns:1fr}
+}
+@media(max-width:600px){
+.container{width:calc(100% - 28px)}.hero{min-height:480px}.section{padding:55px 0}.heading h2{font-size:30px}.stat{padding:17px 13px}.number{font-size:21px}.summary{grid-template-columns:1fr}.job-actions{justify-content:flex-start}.modal-content{padding:23px}
+}
+</style>
+</head>
+
+<body>
+
+<!-- Existing ABTS website header should be retained here -->
+
+<main>
+
+<section class="hero">
+<div class="container">
+<div class="hero-grid">
+<div>
+<div class="eyebrow">Careers at ABTS</div>
+<h1>Build your career<br><span>with engineering.</span></h1>
+<p>
+Join Asa Bhanu Technical Services Limited and work with multidisciplinary
+teams delivering engineering, railway, power, automation, software and
+digital solutions for customers in India and international markets.
+</p>
+<div class="actions">
+<a class="btn primary" href="#open-positions">View Open Positions</a>
+<a class="btn outline" href="#life-at-abts">Life at ABTS</a>
+</div>
+</div>
+<div class="roadmap" aria-hidden="true">
+<div class="line l1"></div><div class="line l2"></div><div class="line l3"></div>
+<div class="point p1"></div><div class="point p2"></div><div class="point p3"></div><div class="point p4"></div>
+<div class="label lb1">Learn</div><div class="label lb2">Innovate</div><div class="label lb3">Deliver</div><div class="label lb4">Grow</div>
+</div>
+</div>
+</div>
+</section>
+
+<section class="stats">
+<div class="container">
+<div class="stats-grid">
+<div class="stat"><div class="number">30+</div><small>Years of Engineering Excellence</small></div>
+<div class="stat"><div class="number">25+</div><small>Years in Rail Transportation</small></div>
+<div class="stat"><div class="number">5</div><small>Core Business Areas</small></div>
+<div class="stat"><div class="number">Global</div><small>Engineering & Service Footprint</small></div>
+</div>
+</div>
+</section>
+
+<section id="open-positions" class="section">
+<div class="container">
+<div class="heading">
+<div class="kicker">Open Positions</div>
+<h2>Find your next opportunity</h2>
+<p>Explore opportunities across engineering, rail transportation, power systems, software, automation and digital technologies.</p>
+</div>
+
+<!-- IMPORTANT: In Elementor, use a Shortcode widget at this exact position.
+     Enter: [abts_careers_jobs]
+     Do NOT paste the shortcode into an HTML widget. -->
+<div class="abts-careers-dynamic">
+    [abts_careers_jobs]
+</div>
+
+</div>
+</section>
+
+<section id="life-at-abts" class="section life">
+<div class="container">
+<div class="heading">
+<div class="kicker">Life at ABTS</div>
+<h2>Grow with a team that builds what matters.</h2>
+<p>At ABTS, people are at the heart of our engineering, technology and project delivery capabilities.</p>
+</div>
+<div class="life-grid">
+<div class="life-card"><div class="life-icon">↗</div><h3>Continuous Learning</h3><p>Develop your engineering and technology capabilities through challenging projects, new technologies and practical domain experience.</p></div>
+<div class="life-card"><div class="life-icon">◇</div><h3>Engineering Culture</h3><p>Work with multidisciplinary teams across power, rail transportation, software, automation and digital engineering.</p></div>
+<div class="life-card"><div class="life-icon">+</div><h3>Collaboration & Growth</h3><p>Contribute to customer-focused projects while developing your technical, professional and leadership capabilities.</p></div>
+</div>
+</div>
+</section>
+
+<section class="general">
+<div class="container">
+<div class="general-inner">
+<div><h2>Don't see your role listed?</h2><p>We are always interested in meeting talented engineers, technology professionals and project specialists. Send us your profile for suitable future opportunities.</p></div>
+<button class="btn primary" id="generalApply">Submit Your Resume</button>
+</div>
+</div>
+</section>
+
+<section class="warning">
+<div class="container">
+<div class="warning-box">
+<h3>⚠ Beware of Recruitment Scams</h3>
+<p><strong>ABTS does not ask candidates to pay money</strong> at any stage of the recruitment process. We do not request payments for interviews, job offers, background verification, training or placement. Please verify suspicious communications through official ABTS contact channels before sharing personal information.</p>
+</div>
+</div>
+</section>
+
+</main>
+
+<!-- Existing ABTS website footer should be retained here -->
+
+<div class="modal" id="modal">
+<div class="modal-content">
+<button class="close" id="close">×</button>
+<h2>Apply to ABTS</h2>
+<p class="modal-desc" id="roleText">Submit your profile for consideration.</p>
+<form class="form" id="careerForm">
+<label>Full Name<input name="name" required></label>
+<label>Email Address<input type="email" name="email" required></label>
+<label>Phone Number<input type="tel" name="phone" required></label>
+<label>Current Location<input name="location"></label>
+<label>Years of Experience<input name="experience"></label>
+<label>Resume<input type="file" name="resume" accept=".pdf,.doc,.docx" required></label>
+<label>Message<textarea name="message"></textarea></label>
+<button class="btn primary" type="submit">Submit Application</button>
+<div class="note">Connect this form to the ABTS recruitment backend, WordPress form plugin or approved recruitment email before production use.</div>
+</form>
+</div>
+</div>
+
+<script>
+(function(){
+  const search=document.getElementById("search");
+  const category=document.getElementById("category");
+  const location=document.getElementById("location");
+  const count=document.getElementById("count");
+  const modal=document.getElementById("modal");
+  const roleText=document.getElementById("roleText");
+
+  document.querySelectorAll(".view").forEach(btn=>{
+    btn.addEventListener("click",()=>{
+      const job=btn.closest(".job");
+      job.classList.toggle("open");
+      btn.textContent=job.classList.contains("open")?"Hide Details":"View Details";
+    });
+  });
+
+  function filter(){
+    const q=search.value.trim().toLowerCase();
+    let visible=0;
+
+    document.querySelectorAll(".job").forEach(job=>{
+      const matchSearch=!q || (job.dataset.search||"").toLowerCase().includes(q);
+      const matchCat=!category.value || job.dataset.category===category.value;
+      const matchLoc=!location.value || job.dataset.location===location.value || location.value==="india";
+      const show=matchSearch && matchCat && matchLoc;
+      job.style.display=show?"":"none";
+      if(show) visible++;
+    });
+
+    document.querySelectorAll(".group").forEach(group=>{
+      const jobs=[...group.querySelectorAll(".job")];
+      group.style.display=jobs.some(j=>j.style.display!=="none")?"":"none";
+    });
+
+    count.textContent=visible?`${visible} opportunity${visible>1?"ies":"y"} matching your search.`:"No matching opportunities found.";
+  }
+
+  [search,category,location].forEach(el=>el.addEventListener("input",filter));
+
+  function openModal(role){
+    roleText.textContent=role?"Applying for: "+role:"Submit your profile for suitable future opportunities.";
+    modal.classList.add("active");
+    document.body.style.overflow="hidden";
+  }
+
+  document.querySelectorAll(".apply").forEach(btn=>{
+    btn.addEventListener("click",()=>openModal(btn.dataset.role));
+  });
+
+  document.getElementById("generalApply").addEventListener("click",()=>openModal(""));
+  document.getElementById("close").addEventListener("click",closeModal);
+  modal.addEventListener("click",e=>{if(e.target===modal)closeModal()});
+  document.addEventListener("keydown",e=>{if(e.key==="Escape")closeModal()});
+
+  function closeModal(){
+    modal.classList.remove("active");
+    document.body.style.overflow="";
+  }
+
+  document.getElementById("careerForm").addEventListener("submit",e=>{
+    e.preventDefault();
+    alert("Application form is ready. Connect it to the ABTS recruitment backend or approved HR email before production.");
+  });
+})();
+</script>
+
+</body>
+</html>
