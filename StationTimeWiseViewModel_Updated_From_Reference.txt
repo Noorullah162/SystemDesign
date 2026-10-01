@@ -1,0 +1,1951 @@
+======================================================================
+STATION WISE PAGE - UPDATED FULL IMPLEMENTATION
+======================================================================
+
+Reference used:
+TimeSeriesPsgCntView.xaml / TimeSeriesPsgCntViewModel.cs
+
+The reference page uses:
+- UC:MultiSelectComboBox
+- StationsItems : ObservableCollection<IStringWithBool>
+- StationsFilterSelctedItems : ObservableCollection<string>
+- StationComboDropDownOpened
+- StationComboDropDownCLosed
+- StationsComboBoxDropDownOpen()
+- StationsComboBoxDropDownClosed()
+- StationItemsFiltersSelectionChanged()
+- UpdateStationsVisibility()
+
+The Station Wise page below follows the same working pattern.
+
+IMPORTANT DESIGN
+----------------
+1. Apply Filter:
+   - Calls database.
+   - Loads ALL stations.
+   - Loads ALL passenger data.
+   - Creates ALL stacked-bar series once.
+   - First 4 stations are selected by default.
+   - Only the selected station values are shown.
+
+2. Station selection:
+   - DOES NOT call database.
+   - Uses the already loaded/original series values.
+   - Changes only the visible values and X-axis labels.
+   - Therefore selecting/unselecting stations is fast.
+
+3. The complete series remain in memory.
+   - We do not recreate the database data.
+   - We only replace the Values collection of each stacked series.
+
+4. Station selection is updated when the MultiSelectComboBox closes,
+   matching the reference page. This prevents rebuilding the chart for
+   every single checkbox click while the dropdown is open.
+
+5. The Name property remains on each series because the chart legend
+   needs it. Tooltip text is separately formatted.
+
+======================================================================
+FILE 1
+StationTimeWiseViewModel.cs
+======================================================================
+
+using DataChangedNotifier;
+using EventsDelegator;
+using LiveChartsCore;
+using LiveChartsCore.Kernel;
+using LiveChartsCore.SkiaSharpView;
+using LiveChartsCore.SkiaSharpView.Painting;
+using LiveChartsCore.SkiaSharpView.Painting.Effects;
+using MigraDoc.DocumentObjectModel;
+using PdfSharp.Drawing;
+using PdfSharp.Pdf;
+using SkiaSharp;
+using System;
+using System.Collections.Generic;
+using System.Collections.ObjectModel;
+using System.Collections.Specialized;
+using System.ComponentModel;
+using System.Data;
+using System.IO;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Text;
+using System.Threading;
+using System.Threading.Tasks;
+using System.Windows;
+using System.Windows.Forms;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using TIMSDataInsights.CustomDataTypes.DataTypes;
+using TIMSDataInsights.CustomDataTypes.Enums;
+using TIMSDataInsights.CustomDataTypes.Interfaces;
+using TIMSDataInsights.DatabaseAccess;
+using TIMSDataInsights.MetroLocationServiceProvider.ViewModels;
+using TIMSDataInsights.Resources.Charts;
+using AppResourcesInterfaces = AppResources.CustomDataTypes.Interfaces;
+
+namespace TIMSDataInsights.ViewModels
+{
+    public class StationTimeWiseViewModel : PropertyChangedNotifier
+    {
+        private AppResourcesInterfaces.IForeignServerDataMapper
+            _foreignServerDataMapper = null;
+
+        // ================================================================
+        // DATE/TIME
+        // ================================================================
+
+        private DateTime _FromDateTime = DateTime.Now.Date;
+
+        public DateTime FromDateTime
+        {
+            get => _FromDateTime;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _FromDateTime,
+                    value,
+                    "FromDateTime");
+
+                UpdateDateRangeDisplay();
+            }
+        }
+
+        private DateTime _ToDateTime = DateTime.Now.Date;
+
+        public DateTime ToDateTime
+        {
+            get => _ToDateTime;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _ToDateTime,
+                    value,
+                    "ToDateTime");
+
+                UpdateDateRangeDisplay();
+            }
+        }
+
+        private string _DateRangeDisplayText = string.Empty;
+
+        public string DateRangeDisplayText
+        {
+            get => _DateRangeDisplayText;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _DateRangeDisplayText,
+                    value,
+                    "DateRangeDisplayText");
+            }
+        }
+
+        private void UpdateDateRangeDisplay()
+        {
+            try
+            {
+                if (FromDateTime != null &&
+                    ToDateTime != null)
+                {
+                    string fromDisplay =
+                        $"{FromDateTime:MMM dd, yyyy HH:mm:ss}";
+
+                    string toDisplay =
+                        $"{ToDateTime:MMM dd, yyyy HH:mm:ss}";
+
+                    DateRangeDisplayText =
+                        $"{fromDisplay} - {toDisplay}";
+                }
+                else
+                {
+                    DateRangeDisplayText =
+                        "Select Date Range";
+                }
+            }
+            catch
+            {
+                DateRangeDisplayText =
+                    "Select Date Range";
+            }
+        }
+
+        // ================================================================
+        // ACTIONS / COMMANDS
+        // ================================================================
+
+        public Action DisplayDateTimeSpanWindow = null;
+
+        /*
+         * IMPORTANT:
+         * These two actions are intentionally implemented in the same
+         * manner as the working TimeSeriesPsgCntViewModel.
+         */
+        public Action StationComboDropDownCLosed
+        {
+            get;
+            set;
+        }
+
+        public Action StationComboDropDownOpened
+        {
+            get;
+            set;
+        }
+
+        public CommandsHandler DateTimeSpanButtonClickCommandHandler
+        {
+            get;
+            set;
+        }
+
+        public CommandsHandler
+            StationTimeWiseViewLoadedEventCommandHandler
+        {
+            get;
+            set;
+        }
+
+        public CommandsHandler ApplyButtonClickCommandHandler
+        {
+            get;
+            set;
+        }
+
+        // ================================================================
+        // DIRECTION
+        // ================================================================
+
+        private Boolean _UplineMode;
+
+        public Boolean UplineMode
+        {
+            get => _UplineMode;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _UplineMode,
+                    value,
+                    "UplineMode");
+            }
+        }
+
+        private Boolean _DownlineMode;
+
+        public Boolean DownlineMode
+        {
+            get => _DownlineMode;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _DownlineMode,
+                    value,
+                    "DownlineMode");
+            }
+        }
+
+        // ================================================================
+        // CORRIDOR
+        // ================================================================
+
+        private ObservableCollection<string> _Corridors;
+
+        public ObservableCollection<string> Corridors
+        {
+            get => _Corridors;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _Corridors,
+                    value,
+                    "Corridors");
+            }
+        }
+
+        private int _CorridorsFilterSelectedIndex;
+
+        public int CorridorsFilterSelectedIndex
+        {
+            get => _CorridorsFilterSelectedIndex;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _CorridorsFilterSelectedIndex,
+                    value,
+                    "CorridorsFilterSelectedIndex");
+            }
+        }
+
+        // ================================================================
+        // BUSY CURSOR
+        // ================================================================
+
+        private bool _ShowBusyCursor;
+
+        public bool ShowBusyCursor
+        {
+            get => _ShowBusyCursor;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _ShowBusyCursor,
+                    value,
+                    "ShowBusyCursor");
+            }
+        }
+
+        // ================================================================
+        // LIVECHARTS PROPERTIES
+        // ================================================================
+
+        private ISeries[] _Series;
+
+        public ISeries[] Series
+        {
+            get => _Series;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _Series,
+                    value,
+                    "Series");
+            }
+        }
+
+        /*
+         * SeriesMap is retained from the existing Station Wise page.
+         */
+        public Dictionary<string, ISeries> SeriesMap { get; } =
+            new Dictionary<string, ISeries>();
+
+        private Axis[] _XAxes;
+
+        public Axis[] XAxes
+        {
+            get => _XAxes;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _XAxes,
+                    value,
+                    "XAxes");
+            }
+        }
+
+        private Axis[] _YAxes;
+
+        public Axis[] YAxes
+        {
+            get => _YAxes;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _YAxes,
+                    value,
+                    "YAxes");
+            }
+        }
+
+        // ================================================================
+        // STATION DATA
+        // ================================================================
+
+        /*
+         * Complete station list loaded from database.
+         *
+         * This NEVER gets reduced when the user changes the station
+         * selection. It represents the complete current filter result.
+         */
+        private List<StationAxisItem> AllStationAxisItems { get; set; } =
+            new List<StationAxisItem>();
+
+        public List<string> AllStations { get; set; } =
+            new List<string>();
+
+        // ================================================================
+        // WORKING MULTI SELECT STATION FILTER
+        // ================================================================
+
+        /*
+         * This follows the same pattern as the working
+         * TimeSeriesPsgCntViewModel.
+         *
+         * The MultiSelectComboBox binds its item source to StationsItems.
+         */
+        private ObservableCollection<IStringWithBool> _StationsItems;
+
+        public ObservableCollection<IStringWithBool> StationsItems
+        {
+            get => _StationsItems;
+
+            set
+            {
+                RaisePropertyChanged(
+                    ref _StationsItems,
+                    value,
+                    "StationsItems");
+            }
+        }
+
+        /*
+         * Contains only the selected station names.
+         *
+         * Example:
+         *   ["Miyapur", "JNTU College", "KPHB Colony", "Kukatpally"]
+         */
+        private ObservableCollection<string>
+            _StationsFilterSelctedItems;
+
+        public ObservableCollection<string>
+            StationsFilterSelctedItems
+        {
+            get => _StationsFilterSelctedItems;
+
+            set
+            {
+                if (value != null)
+                {
+                    value.CollectionChanged +=
+                        StationItemsFiltersSelectionChanged;
+                }
+
+                RaisePropertyChanged(
+                    ref _StationsFilterSelctedItems,
+                    value,
+                    "StationsFilterSelctedItems");
+            }
+        }
+
+        /*
+         * Stores the selected station list before the dropdown opens.
+         *
+         * This is exactly the optimization used in the reference page:
+         * chart refresh occurs only when the dropdown selection actually
+         * changed.
+         */
+        private List<string>
+            StationsFilterSelectedItemsBeforeOpeningDropDown = null;
+
+        /*
+         * Prevents the CollectionChanged event from triggering chart
+         * updates while we are programmatically creating the default
+         * station selection after a database load.
+         */
+        private bool _IsUpdatingStationSelection = false;
+
+        // ================================================================
+        // CACHED ORIGINAL SERIES VALUES
+        // ================================================================
+
+        /*
+         * VERY IMPORTANT:
+         *
+         * This dictionary contains the ORIGINAL COMPLETE values for every
+         * stacked-bar series.
+         *
+         * Example:
+         *
+         *   "07:01 TS023"
+         *        -> all station values
+         *
+         *   "07:09 TS015"
+         *        -> all station values
+         *
+         * When stations are hidden, we DO NOT delete this original data.
+         *
+         * UpdateStationsVisibility() simply creates a new visible array
+         * from this original data.
+         */
+        private Dictionary<string, PassengerCountStackedPoint[]>
+            OriginalSeriesValues =
+                new Dictionary<string, PassengerCountStackedPoint[]>();
+
+        // ================================================================
+        // CONSTRUCTOR
+        // ================================================================
+
+        public StationTimeWiseViewModel()
+        {
+            InitializeFields();
+            CommandHandlersRegistration();
+        }
+
+        // ================================================================
+        // INITIALIZATION
+        // ================================================================
+
+        private void InitializeFields()
+        {
+            ShowBusyCursor = true;
+
+            _foreignServerDataMapper =
+                new HMRCForeignServerDataMapper(
+                    new SQLDBInteraction());
+
+            /*
+             * Use the same working MultiSelectComboBox event pattern as
+             * TimeSeriesPsgCntViewModel.
+             */
+            StationComboDropDownCLosed =
+                StationsComboBoxDropDownClosed;
+
+            StationComboDropDownOpened =
+                StationsComboBoxDropDownOpen;
+
+            _UplineMode = true;
+            _DownlineMode = false;
+
+            _Corridors =
+                new ObservableCollection<string>();
+
+            _StationsItems =
+                new ObservableCollection<IStringWithBool>();
+
+            StationsItems =
+                new ObservableCollection<IStringWithBool>();
+
+            /*
+             * The selected-items collection is created here so the
+             * MultiSelectComboBox can bind to it immediately.
+             */
+            _StationsFilterSelctedItems =
+                new ObservableCollection<string>();
+
+            StationsFilterSelctedItems =
+                _StationsFilterSelctedItems;
+
+            /*
+             * Start chart properties with empty values.
+             */
+            Series = Array.Empty<ISeries>();
+            XAxes = Array.Empty<Axis>();
+            YAxes = Array.Empty<Axis>();
+
+            ShowBusyCursor = false;
+        }
+
+        // ================================================================
+        // COMMAND REGISTRATION
+        // ================================================================
+
+        private void CommandHandlersRegistration()
+        {
+            DateTimeSpanButtonClickCommandHandler =
+                new CommandsHandler(
+                    DateTimeSpanButtonClickEvent,
+                    CanExecuteButton);
+
+            ApplyButtonClickCommandHandler =
+                new CommandsHandler(
+                    ApplyButtonEvent,
+                    CanExecuteButton);
+
+            StationTimeWiseViewLoadedEventCommandHandler =
+                new CommandsHandler(
+                    StationTimeWiseViewLoadedEvent,
+                    (object obj) => true);
+        }
+
+        private bool CanExecuteButton(object obj)
+        {
+            return true;
+        }
+
+        private void DateTimeSpanButtonClickEvent(
+            object eventArgs)
+        {
+            DisplayDateTimeSpanWindow?.Invoke();
+        }
+
+        // ================================================================
+        // APPLY BUTTON
+        // ================================================================
+
+        private void ApplyButtonEvent(object obj)
+        {
+            /*
+             * IMPORTANT:
+             *
+             * Apply button is the ONLY operation that reloads data from
+             * the database.
+             *
+             * Station selection does NOT call LoadAsync().
+             */
+            LoadAsync();
+        }
+
+        // ================================================================
+        // PAGE LOADED
+        // ================================================================
+
+        private async void StationTimeWiseViewLoadedEvent(
+            object obj)
+        {
+            ShowBusyCursor = true;
+
+            try
+            {
+                /*
+                 * Existing/default values from the Station Wise page.
+                 *
+                 * Keep/change these according to your application.
+                 */
+                FromDateTime =
+                    new DateTime(
+                        2026,
+                        6,
+                        8,
+                        7,
+                        0,
+                        0);
+
+                ToDateTime =
+                    new DateTime(
+                        2026,
+                        6,
+                        8,
+                        8,
+                        0,
+                        0);
+
+                IList<string> corridors =
+                    await Task.Run(
+                        () => _foreignServerDataMapper
+                            .GetUICorridors());
+
+                Corridors =
+                    new ObservableCollection<string>(
+                        corridors);
+
+                UplineMode = true;
+                DownlineMode = false;
+
+                /*
+                 * Initial database load.
+                 *
+                 * This also creates the station multi-select list and
+                 * selects the first four stations.
+                 */
+                LoadAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    ex);
+            }
+            finally
+            {
+                ShowBusyCursor = false;
+            }
+        }
+
+        // ================================================================
+        // DATABASE LOAD
+        // ================================================================
+
+        public void LoadAsync()
+        {
+            ShowBusyCursor = true;
+
+            try
+            {
+                int DirectionMode =
+                    UplineMode ? 0 : 1;
+
+                /*
+                 * ========================================================
+                 * 1. GET COMPLETE STATION AXIS DATA
+                 * ========================================================
+                 */
+                DataTable StationAxiesTable =
+                    _foreignServerDataMapper
+                        .GetStationAxisAsync(
+                            CorridorsFilterSelectedIndex + 1,
+                            DirectionMode);
+
+                /*
+                 * ========================================================
+                 * 2. GET COMPLETE PASSENGER DATA
+                 * ========================================================
+                 */
+                DataTable PassengerDataTable =
+                    _foreignServerDataMapper
+                        .GetPassengerGraphDataAsync(
+                            FromDateTime,
+                            ToDateTime,
+                            CorridorsFilterSelectedIndex + 1,
+                            DirectionMode);
+
+                /*
+                 * ========================================================
+                 * 3. CONVERT STATION DATA
+                 * ========================================================
+                 */
+                List<StationAxisItem> stations =
+                    new List<StationAxisItem>();
+
+                foreach (DataRow row
+                         in StationAxiesTable.Rows)
+                {
+                    stations.Add(
+                        new StationAxisItem
+                        {
+                            StationIndex =
+                                Convert.ToInt32(
+                                    row["StationIndex"]),
+
+                            StationName =
+                                row["StationName"]
+                                    ?.ToString()
+                                ?? string.Empty
+                        });
+                }
+
+                /*
+                 * ========================================================
+                 * 4. CONVERT PASSENGER DATA
+                 * ========================================================
+                 */
+                List<PassengerStationPoint> points =
+                    new List<PassengerStationPoint>();
+
+                foreach (DataRow row
+                         in PassengerDataTable.Rows)
+                {
+                    points.Add(
+                        new PassengerStationPoint
+                        {
+                            TrainNo =
+                                row["TrainNo"]
+                                    ?.ToString()
+                                ?? string.Empty,
+
+                            TripId =
+                                Convert.ToInt32(
+                                    row["TripId"]),
+
+                            StationIndex =
+                                Convert.ToInt32(
+                                    row["StationIndex"]),
+
+                            CurrentStation =
+                                row["CurrentStation"]
+                                    ?.ToString()
+                                ?? string.Empty,
+
+                            NextStation =
+                                row["NextStation"]
+                                    ?.ToString()
+                                ?? string.Empty,
+
+                            DDateTime =
+                                Convert.ToDateTime(
+                                    row["DDateTime"]),
+
+                            TotalPassenger =
+                                Convert.ToInt32(
+                                    row["TotalPassenger"])
+                        });
+                }
+
+                /*
+                 * ========================================================
+                 * 5. STORE COMPLETE STATION LIST
+                 * ========================================================
+                 */
+                AllStationAxisItems =
+                    stations
+                        .OrderBy(x => x.StationIndex)
+                        .ToList();
+
+                AllStations =
+                    AllStationAxisItems
+                        .Select(x => x.StationName)
+                        .ToList();
+
+                RaisePropertyChanged(
+                    "AllStations");
+
+                /*
+                 * ========================================================
+                 * 6. BUILD COMPLETE STACKED SERIES
+                 * ========================================================
+                 *
+                 * BuildSeries creates the full data set.
+                 *
+                 * It does NOT apply the station selection yet.
+                 */
+                BuildSeries(points);
+
+                /*
+                 * ========================================================
+                 * 7. CREATE STATION MULTI SELECT ITEMS
+                 * ========================================================
+                 *
+                 * First 4 stations are selected.
+                 */
+                BuildStationSelectionItems();
+
+                /*
+                 * ========================================================
+                 * 8. APPLY DEFAULT STATION VISIBILITY
+                 * ========================================================
+                 */
+                UpdateStationsVisibility();
+            }
+            catch (OperationCanceledException)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    "Station chart refresh cancelled.");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    "Station chart error: " +
+                    ex);
+            }
+            finally
+            {
+                ShowBusyCursor = false;
+            }
+        }
+
+        // ================================================================
+        // BUILD STATION MULTI SELECT LIST
+        // ================================================================
+
+        private void BuildStationSelectionItems()
+        {
+            _IsUpdatingStationSelection = true;
+
+            try
+            {
+                StationsItems.Clear();
+                StationsFilterSelctedItems.Clear();
+
+                var orderedStations =
+                    AllStationAxisItems
+                        .OrderBy(x => x.StationIndex)
+                        .ToList();
+
+                for (int i = 0;
+                     i < orderedStations.Count;
+                     i++)
+                {
+                    bool isSelected = i < 4;
+
+                    string stationName =
+                        orderedStations[i].StationName;
+
+                    /*
+                     * This is the same StringWithBool constructor pattern
+                     * used by the working TimeSeriesPsgCntView page.
+                     */
+                    StationsItems.Add(
+                        new StringWithBool(
+                            stationName,
+                            isSelected));
+
+                    /*
+                     * SelectedItems contains the station names that the
+                     * MultiSelectComboBox should show as selected.
+                     */
+                    if (isSelected)
+                    {
+                        StationsFilterSelctedItems.Add(
+                            stationName);
+                    }
+                }
+            }
+            finally
+            {
+                _IsUpdatingStationSelection = false;
+            }
+        }
+
+        // ================================================================
+        // STATION DROPDOWN OPEN
+        // ================================================================
+
+        /*
+         * This is exactly the same concept as the working reference:
+         *
+         * StationsComboBoxDropDownOpen()
+         *
+         * Save the current selection before the user changes anything.
+         */
+        public void StationsComboBoxDropDownOpen()
+        {
+            StationsFilterSelectedItemsBeforeOpeningDropDown =
+                StationsFilterSelctedItems == null
+                    ? new List<string>()
+                    : new List<string>(
+                        StationsFilterSelctedItems);
+        }
+
+        // ================================================================
+        // STATION DROPDOWN CLOSED
+        // ================================================================
+
+        /*
+         * This is exactly the same concept as the working reference:
+         *
+         * StationsComboBoxDropDownClosed()
+         *
+         * Only update the chart if the selected station list actually
+         * changed.
+         */
+        public void StationsComboBoxDropDownClosed()
+        {
+            if (_IsUpdatingStationSelection)
+            {
+                return;
+            }
+
+            if (IsCollectionNullOrEmpty(
+                    StationsFilterSelctedItems) == false)
+            {
+                if (AreBothListsAreEqual(
+                        StationsFilterSelctedItems,
+                        StationsFilterSelectedItemsBeforeOpeningDropDown)
+                    == false)
+                {
+                    UpdateStationsVisibility();
+                }
+
+                StationsFilterSelectedItemsBeforeOpeningDropDown =
+                    null;
+            }
+            else
+            {
+                /*
+                 * Same behavior as the working reference:
+                 * if nothing is selected, update the chart.
+                 *
+                 * UpdateStationsVisibility() will show all stations
+                 * when the selected collection is empty.
+                 */
+                UpdateStationsVisibility();
+
+                StationsFilterSelectedItemsBeforeOpeningDropDown =
+                    null;
+            }
+        }
+
+        // ================================================================
+        // COLLECTION EMPTY CHECK
+        // ================================================================
+
+        public static bool IsCollectionNullOrEmpty<T>(
+            IEnumerable<T> list)
+        {
+            if (list != null &&
+                list.Count() > 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        // ================================================================
+        // COMPARE TWO SELECTION LISTS
+        // ================================================================
+
+        private bool AreBothListsAreEqual<T>(
+            IEnumerable<T> list1,
+            IEnumerable<T> list2)
+        {
+            /*
+             * Both null/empty means no change.
+             */
+            if (list1 == null && list2 == null)
+            {
+                return true;
+            }
+
+            if (list1 == null)
+            {
+                return false;
+            }
+
+            if (list2 == null)
+            {
+                return false;
+            }
+
+            /*
+             * A HashSet comparison is simpler and faster than nested
+             * loops used in the original reference.
+             *
+             * Station names are unique in the station axis.
+             */
+            var first =
+                new HashSet<T>(list1);
+
+            var second =
+                new HashSet<T>(list2);
+
+            return first.SetEquals(second);
+        }
+
+        // ================================================================
+        // STATION COLLECTION CHANGED
+        // ================================================================
+
+        private void StationItemsFiltersSelectionChanged(
+            object sender,
+            NotifyCollectionChangedEventArgs e)
+        {
+            /*
+             * DO NOT update the chart for every checkbox click.
+             *
+             * The chart will be updated when the dropdown closes.
+             *
+             * This matches the working reference behavior and is also
+             * better for LiveCharts stacked columns.
+             */
+            if (_IsUpdatingStationSelection)
+            {
+                return;
+            }
+
+            /*
+             * Intentionally no chart rebuild here.
+             *
+             * The selected collection is only used when the dropdown
+             * closes.
+             */
+        }
+
+        // ================================================================
+        // BUILD COMPLETE CHART AXIS
+        // ================================================================
+
+        private void BuildAxis(
+            List<StationAxisItem> stations)
+        {
+            var orderedStations =
+                stations
+                    .OrderBy(x => x.StationIndex)
+                    .ToList();
+
+            XAxes =
+                new Axis[]
+                {
+                    new Axis
+                    {
+                        Name = "Stations",
+
+                        Labels =
+                            orderedStations
+                                .Select(x =>
+                                    x.StationName)
+                                .ToArray(),
+
+                        LabelsRotation = 90,
+
+                        TextSize = 10,
+
+                        MinStep = 1,
+
+                        UnitWidth = 1,
+
+                        ForceStepToMin = true,
+
+                        SeparatorsPaint =
+                            new SolidColorPaint(
+                                new SKColor(
+                                    225,
+                                    225,
+                                    225))
+                    }
+                };
+
+            YAxes =
+                new Axis[]
+                {
+                    new Axis
+                    {
+                        Name =
+                            "Passenger Count",
+
+                        MinLimit = 0,
+
+                        TextSize = 13,
+
+                        SeparatorsPaint =
+                            new SolidColorPaint(
+                                new SKColor(
+                                    225,
+                                    225,
+                                    225))
+                    }
+                };
+        }
+
+        // ================================================================
+        // BUILD COMPLETE STACKED SERIES
+        // ================================================================
+
+        private void BuildSeries(
+            List<PassengerStationPoint> points)
+        {
+            /*
+             * Clear old data.
+             */
+            SeriesMap.Clear();
+
+            OriginalSeriesValues.Clear();
+
+            /*
+             * Build complete axis first.
+             */
+            BuildAxis(
+                AllStationAxisItems);
+
+            /*
+             * Group by Train + Trip.
+             *
+             * One StackedColumnSeries = one Train/Trip.
+             */
+            var groups =
+                points
+                    .OrderBy(x => x.DDateTime)
+                    .GroupBy(x => new
+                    {
+                        x.TrainNo,
+                        x.TripId
+                    })
+                    .OrderBy(x =>
+                        x.Min(y => y.DDateTime))
+                    .ToList();
+
+            var series =
+                new List<ISeries>();
+
+            var palette =
+                GetPalette();
+
+            int colorIndex = 0;
+
+            /*
+             * Complete station list.
+             *
+             * Every series gets a value for every station.
+             */
+            var allStations =
+                AllStationAxisItems
+                    .OrderBy(x => x.StationIndex)
+                    .ToList();
+
+            foreach (var group in groups)
+            {
+                string trainNo =
+                    group.Key.TrainNo;
+
+                DateTime time =
+                    group.Min(
+                        x => x.DDateTime);
+
+                /*
+                 * Name is intentionally retained.
+                 *
+                 * This is what LiveCharts uses for the legend.
+                 */
+                string seriesName =
+                    $"{time:HH:mm} {trainNo}";
+
+                /*
+                 * Build lookup:
+                 *
+                 * StationIndex -> PassengerStationPoint
+                 *
+                 * This avoids FirstOrDefault() for every station.
+                 */
+                var stationLookup =
+                    group
+                        .GroupBy(
+                            x => x.StationIndex)
+                        .ToDictionary(
+                            g => g.Key,
+                            g => g.First());
+
+                var originalValues =
+                    new List<PassengerCountStackedPoint>();
+
+                /*
+                 * Create COMPLETE values.
+                 *
+                 * These values are never deleted when a station is
+                 * selected/unselected.
+                 */
+                foreach (var station
+                         in allStations)
+                {
+                    if (stationLookup.TryGetValue(
+                            station.StationIndex,
+                            out PassengerStationPoint data))
+                    {
+                        originalValues.Add(
+                            new PassengerCountStackedPoint
+                            {
+                                StationIndex =
+                                    station.StationIndex,
+
+                                StationName =
+                                    station.StationName,
+
+                                TrainNo =
+                                    trainNo,
+
+                                DDateTime =
+                                    data.DDateTime,
+
+                                PassengerCount =
+                                    data.TotalPassenger
+                            });
+                    }
+                    else
+                    {
+                        /*
+                         * Keep a zero value so every train has the same
+                         * station positions.
+                         */
+                        originalValues.Add(
+                            new PassengerCountStackedPoint
+                            {
+                                StationIndex =
+                                    station.StationIndex,
+
+                                StationName =
+                                    station.StationName,
+
+                                TrainNo =
+                                    trainNo,
+
+                                DDateTime =
+                                    time,
+
+                                PassengerCount = 0
+                            });
+                    }
+                }
+
+                PassengerCountStackedPoint[] originalArray =
+                    originalValues.ToArray();
+
+                /*
+                 * Store original values.
+                 *
+                 * This is the key to avoiding database calls when the
+                 * station filter changes.
+                 */
+                OriginalSeriesValues[seriesName] =
+                    originalArray;
+
+                SKColor lineColor =
+                    palette[
+                        colorIndex %
+                        palette.Count];
+
+                var columnSeries =
+                    new StackedColumnSeries<
+                        PassengerCountStackedPoint>
+                    {
+                        /*
+                         * KEEP Name.
+                         *
+                         * Removing Name would also remove the useful
+                         * legend text.
+                         */
+                        Name = seriesName,
+
+                        /*
+                         * Initially show all values.
+                         *
+                         * UpdateStationsVisibility() immediately
+                         * replaces this with the first four stations.
+                         */
+                        Values = originalArray,
+
+                        Fill =
+                            new SolidColorPaint(
+                                lineColor),
+
+                        Stroke = null,
+
+                        MaxBarWidth = 100,
+
+                        DataLabelsPaint =
+                            new SolidColorPaint(
+                                SKColors.White),
+
+                        DataLabelsSize = 11,
+
+                        /*
+                         * Display inside each stacked segment:
+                         *
+                         * 07:01 TS023 178
+                         */
+                        DataLabelsFormatter =
+                            point =>
+                            {
+                                if (point.Model
+                                    is PassengerCountStackedPoint data)
+                                {
+                                    if (data.PassengerCount <= 0)
+                                    {
+                                        return string.Empty;
+                                    }
+
+                                    return
+                                        $"{data.DDateTime:HH:mm} " +
+                                        $"{data.TrainNo} " +
+                                        $"{data.PassengerCount}";
+                                }
+
+                                return string.Empty;
+                            },
+
+                        /*
+                         * Tooltip X label.
+                         *
+                         * The series Name remains available for the
+                         * legend, but this formatter controls the X-axis
+                         * part of the tooltip.
+                         */
+                        XToolTipLabelFormatter =
+                            chartPoint =>
+                            {
+                                if (chartPoint.Model
+                                    is PassengerCountStackedPoint data)
+                                {
+                                    return data.StationName;
+                                }
+
+                                return string.Empty;
+                            },
+
+                        /*
+                         * Tooltip Y label.
+                         *
+                         * This is the passenger information shown for
+                         * the selected stacked segment.
+                         */
+                        YToolTipLabelFormatter =
+                            chartPoint =>
+                            {
+                                if (chartPoint.Model
+                                    is PassengerCountStackedPoint data)
+                                {
+                                    return
+                                        $"Time: " +
+                                        $"{data.DDateTime:HH:mm}\n" +
+                                        $"Train: " +
+                                        $"{data.TrainNo}\n" +
+                                        $"Passengers: " +
+                                        $"{data.PassengerCount}";
+                                }
+
+                                return string.Empty;
+                            }
+                    };
+
+                series.Add(
+                    columnSeries);
+
+                SeriesMap[seriesName] =
+                    columnSeries;
+
+                colorIndex++;
+            }
+
+            /*
+             * Set the complete series collection only once.
+             *
+             * Later station filtering does not recreate the series.
+             */
+            Series =
+                series.ToArray();
+        }
+
+        // ================================================================
+        // UPDATE STATION VISIBILITY
+        // ================================================================
+
+        private void UpdateStationsVisibility()
+        {
+            if (AllStationAxisItems == null ||
+                AllStationAxisItems.Count == 0)
+            {
+                return;
+            }
+
+            /*
+             * ============================================================
+             * 1. GET SELECTED STATION NAMES
+             * ============================================================
+             */
+            var selectedStations =
+                new HashSet<string>(
+                    StationsFilterSelctedItems
+                    ?? Enumerable.Empty<string>(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            /*
+             * Same usable behavior as the reference page:
+             *
+             * If selection is empty, show all stations.
+             */
+            var visibleStations =
+                selectedStations.Count == 0
+                    ? AllStationAxisItems
+                        .OrderBy(x => x.StationIndex)
+                        .ToList()
+                    : AllStationAxisItems
+                        .Where(x =>
+                            selectedStations.Contains(
+                                x.StationName))
+                        .OrderBy(x => x.StationIndex)
+                        .ToList();
+
+            /*
+             * ============================================================
+             * 2. UPDATE X-AXIS
+             * ============================================================
+             *
+             * For stacked columns the Values index determines the X
+             * position. Therefore the values must also be rebuilt using
+             * the SAME visible station order.
+             */
+            if (XAxes == null ||
+                XAxes.Length == 0)
+            {
+                BuildAxis(
+                    visibleStations);
+            }
+            else
+            {
+                XAxes[0].Labels =
+                    visibleStations
+                        .Select(x =>
+                            x.StationName)
+                        .ToArray();
+
+                /*
+                 * Notify LiveCharts/WPF that the axis property changed.
+                 *
+                 * Creating a new Axis[] is safer than relying on an
+                 * internal mutation notification.
+                 */
+                XAxes =
+                    new Axis[]
+                    {
+                        new Axis
+                        {
+                            Name = "Stations",
+
+                            Labels =
+                                visibleStations
+                                    .Select(x =>
+                                        x.StationName)
+                                    .ToArray(),
+
+                            LabelsRotation = 90,
+
+                            TextSize = 10,
+
+                            MinStep = 1,
+
+                            UnitWidth = 1,
+
+                            ForceStepToMin = true,
+
+                            SeparatorsPaint =
+                                new SolidColorPaint(
+                                    new SKColor(
+                                        225,
+                                        225,
+                                        225))
+                        }
+                    };
+            }
+
+            /*
+             * ============================================================
+             * 3. REBUILD ONLY VISIBLE VALUES
+             * ============================================================
+             *
+             * IMPORTANT:
+             *
+             * We DO NOT query the database.
+             *
+             * We DO NOT recreate the ISeries objects.
+             *
+             * We only replace the Values for each existing stacked
+             * series using OriginalSeriesValues.
+             */
+            if (Series == null)
+            {
+                return;
+            }
+
+            foreach (var stackedSeries
+                     in Series.OfType<
+                         StackedColumnSeries<
+                             PassengerCountStackedPoint>>())
+            {
+                string seriesName =
+                    stackedSeries.Name?.ToString()
+                    ?? string.Empty;
+
+                if (!OriginalSeriesValues.TryGetValue(
+                        seriesName,
+                        out PassengerCountStackedPoint[]
+                            originalValues))
+                {
+                    continue;
+                }
+
+                /*
+                 * Dictionary makes station lookup O(1).
+                 */
+                var originalLookup =
+                    originalValues
+                        .ToDictionary(
+                            x => x.StationIndex,
+                            x => x);
+
+                var newValues =
+                    new List<
+                        PassengerCountStackedPoint>();
+
+                /*
+                 * IMPORTANT:
+                 *
+                 * Add values in exactly the same order as X-axis labels.
+                 *
+                 * Example:
+                 *
+                 * Selected:
+                 * Station 1
+                 * Station 4
+                 * Station 7
+                 *
+                 * X-axis:
+                 * [Station1, Station4, Station7]
+                 *
+                 * Values:
+                 * [value1, value4, value7]
+                 */
+                foreach (var station
+                         in visibleStations)
+                {
+                    if (originalLookup.TryGetValue(
+                            station.StationIndex,
+                            out PassengerCountStackedPoint
+                                point))
+                    {
+                        newValues.Add(
+                            point);
+                    }
+                }
+
+                /*
+                 * Replace visible values.
+                 *
+                 * The original values remain safely stored in
+                 * OriginalSeriesValues.
+                 */
+                stackedSeries.Values =
+                    newValues.ToArray();
+            }
+
+            /*
+             * Request chart update.
+             *
+             * Series is still the same ISeries[] reference, so explicitly
+             * notify the binding after changing Values.
+             */
+            RaisePropertyChanged(
+                "Series");
+        }
+
+        // ================================================================
+        // PROFESSIONAL STACKED BAR COLORS
+        // ================================================================
+
+        private List<SKColor> GetPalette()
+        {
+            /*
+             * The previous Red/Blue/Green/Orange/Yellow palette was very
+             * saturated and made the chart visually noisy.
+             *
+             * This palette uses professional darker tones which work
+             * better with white data labels.
+             */
+            return new List<SKColor>
+            {
+                SKColor.Parse("#2563EB"), // Blue
+                SKColor.Parse("#0F766E"), // Teal
+                SKColor.Parse("#4338CA"), // Indigo
+                SKColor.Parse("#15803D"), // Green
+                SKColor.Parse("#7E22CE"), // Purple
+                SKColor.Parse("#C2410C"), // Orange
+                SKColor.Parse("#BE185D"), // Pink
+                SKColor.Parse("#0369A1"), // Ocean Blue
+                SKColor.Parse("#6D28D9"), // Violet
+                SKColor.Parse("#166534"), // Forest Green
+
+                SKColor.Parse("#B45309"), // Amber
+                SKColor.Parse("#9F1239"), // Rose
+                SKColor.Parse("#334155"), // Slate
+                SKColor.Parse("#1E3A8A"), // Navy
+                SKColor.Parse("#115E59"), // Dark Teal
+
+                SKColor.Parse("#7C3AED"), // Purple
+                SKColor.Parse("#9A3412"), // Dark Orange
+                SKColor.Parse("#881337"), // Dark Pink
+                SKColor.Parse("#312E81"), // Dark Indigo
+                SKColor.Parse("#164E63"), // Dark Cyan
+
+                SKColor.Parse("#3F3F46"), // Charcoal
+                SKColor.Parse("#475569"), // Slate Gray
+                SKColor.Parse("#4C1D95"), // Dark Violet
+                SKColor.Parse("#134E4A"), // Deep Teal
+                SKColor.Parse("#365314"), // Olive
+                SKColor.Parse("#78350F"), // Brown
+                SKColor.Parse("#7F1D1D"), // Dark Red
+                SKColor.Parse("#1E1B4B"), // Deep Indigo
+                SKColor.Parse("#1E293B"), // Deep Slate
+                SKColor.Parse("#44403C")  // Warm Gray
+            };
+        }
+
+        // ================================================================
+        // CHART FRAME
+        // ================================================================
+
+        public DrawMarginFrame
+            DrawMarginTimeSeriesFrame =>
+            new DrawMarginFrame
+            {
+                Stroke =
+                    new SolidColorPaint(
+                        SKColor.Parse("#D3D3D3"),
+                        1)
+            };
+    }
+
+    // ====================================================================
+    // PASSENGER STACKED POINT
+    // ====================================================================
+
+    /*
+     * This class is the model used by:
+     *
+     * StackedColumnSeries<PassengerCountStackedPoint>
+     *
+     * No LiveCharts Configure/HasMap registration is required when the
+     * series uses the Values plus the formatter/mapping approach above.
+     */
+    public class PassengerCountStackedPoint
+    {
+        public int StationIndex { get; set; }
+
+        public string StationName { get; set; }
+
+        public string TrainNo { get; set; }
+
+        public DateTime DDateTime { get; set; }
+
+        public double PassengerCount { get; set; }
+    }
+}
+
+======================================================================
+FILE 2
+StationTimeWiseViewPage.xaml
+======================================================================
+
+IMPORTANT:
+Replace only the station filter portion with the same MultiSelectComboBox
+pattern already working in TimeSeriesPsgCntView.xaml.
+
+Use:
+
+<StackPanel Grid.Column="0"
+            Orientation="Vertical">
+
+    <StackPanel Orientation="Horizontal"
+                Margin="0 0 0 5">
+
+        <ui:SymbolIcon
+            Symbol="Location24"
+            Foreground="#64748B"
+            FontSize="16"
+            VerticalAlignment="Center"/>
+
+        <TextBlock
+            Text="Stations"
+            FontSize="11"
+            FontWeight="SemiBold"
+            Foreground="#475569"
+            Margin="6,0,8,0"
+            VerticalAlignment="Center"/>
+
+    </StackPanel>
+
+    <UC:MultiSelectComboBox
+        x:Name="StsationCombobox"
+        Foreground="Black"
+        Height="40"
+
+        DropDownClosed=
+            "{Binding StationComboDropDownCLosed}"
+
+        DropDownOpened=
+            "{Binding StationComboDropDownOpened}"
+
+        IsSelectAllEnabled="True"
+
+        ItemSource=
+            "{Binding StationsItems,
+                      Mode=TwoWay}"
+
+        SelectedItems=
+            "{Binding StationsFilterSelctedItems,
+                      Mode=TwoWay}"
+
+        Width="220"/>
+
+</StackPanel>
+
+
+======================================================================
+FILE 3
+YOUR EXISTING CARTESIAN CHART
+======================================================================
+
+Keep your existing chart binding:
+
+<lvc:CartesianChart
+    Grid.Row="1"
+    x:Name="StationSeriesChart"
+
+    Series="{Binding Series,
+                     Mode=TwoWay}"
+
+    XAxes="{Binding XAxes,
+                     Mode=TwoWay}"
+
+    YAxes="{Binding YAxes,
+                     Mode=TwoWay}"
+
+    TooltipFindingStrategy=
+        "CompareAllTakeClosest"
+
+    TooltipPosition="Top"
+
+    DrawMarginFrame=
+        "{Binding DrawMarginTimeSeriesFrame}">
+
+</lvc:CartesianChart>
+
+
+======================================================================
+IMPORTANT IMPLEMENTATION CORRECTION
+======================================================================
+
+In BuildStationSelectionItems(), use the constructor form already
+demonstrated by your working reference:
+
+    new StringWithBool(stationName, isSelected)
+
+Therefore the final method to use is:
+
+private void BuildStationSelectionItems()
+{
+    _IsUpdatingStationSelection = true;
+
+    try
+    {
+        StationsItems.Clear();
+        StationsFilterSelctedItems.Clear();
+
+        var orderedStations =
+            AllStationAxisItems
+                .OrderBy(x => x.StationIndex)
+                .ToList();
+
+        for (int i = 0;
+             i < orderedStations.Count;
+             i++)
+        {
+            bool isSelected = i < 4;
+
+            string stationName =
+                orderedStations[i].StationName;
+
+            StationsItems.Add(
+                new StringWithBool(
+                    stationName,
+                    isSelected));
+
+            if (isSelected)
+            {
+                StationsFilterSelctedItems.Add(
+                    stationName);
+            }
+        }
+    }
+    finally
+    {
+        _IsUpdatingStationSelection = false;
+    }
+}
+
+IMPORTANT:
+Use the above method as the actual BuildStationSelectionItems()
+implementation.
+
+The helper method SetStringWithBoolValue() and the
+BuildStationSelectionItemsActual() method are documentation only and
+should NOT be kept in the final class.
+
+======================================================================
+FINAL FLOW
+======================================================================
+
+PAGE LOAD
+    |
+    +--> LoadAsync()
+            |
+            +--> GetStationAxisAsync()
+            |
+            +--> GetPassengerGraphDataAsync()
+            |
+            +--> Convert DB data
+            |
+            +--> BuildSeries()
+            |       |
+            |       +--> create ALL stacked series
+            |       +--> save OriginalSeriesValues
+            |
+            +--> BuildStationSelectionItems()
+            |       |
+            |       +--> first 4 = selected
+            |
+            +--> UpdateStationsVisibility()
+                    |
+                    +--> X-axis = first 4 stations
+                    +--> stacked values = first 4 stations
+
+
+APPLY FILTER
+    |
+    +--> LoadAsync()
+            |
+            +--> database reload
+            +--> old chart data replaced
+            +--> first 4 stations selected again
+
+
+STATION DROPDOWN OPEN
+    |
+    +--> save current selection
+
+
+USER SELECTS / UNSELECTS STATIONS
+    |
+    +--> NO DATABASE CALL
+    |
+    +--> collection changes only
+
+
+STATION DROPDOWN CLOSE
+    |
+    +--> compare old selection vs new selection
+    |
+    +--> if changed:
+            |
+            +--> UpdateStationsVisibility()
+                    |
+                    +--> update X-axis labels
+                    |
+                    +--> for every train/trip series:
+                    |       |
+                    |       +--> get ORIGINAL values
+                    |       +--> keep only selected stations
+                    |       +--> assign new Values
+                    |
+                    +--> chart refresh
+
+
+======================================================================
+WHY THIS IS BETTER FOR THE STATION WISE STACKED BAR PAGE
+======================================================================
+
+The working reference page already demonstrates that station selection
+can be handled by changing the existing chart data rather than querying
+the database again. The reference specifically uses StationsItems,
+StationsFilterSelctedItems and the dropdown open/close callbacks.
+See the original reference XAML at lines 2-15 and the corresponding
+ViewModel properties at lines 303-356. fileciteturn0file0L303-L356
+
+The reference also saves the selected stations when the dropdown opens
+and calls UpdateStationsVisibility() only when the dropdown closes and
+the selection changed. fileciteturn0file0L511-L540
+
+For Station Wise, the same pattern is applied to StackedColumnSeries:
+the complete train/station values are cached, and station selection only
+changes the visible Values array. This is preferable to calling
+GetPassengerGraphDataAsync() for every station selection.
+
+======================================================================
+IMPORTANT NOTE BEFORE COPYING
+======================================================================
+
+1. Do NOT keep two BuildStationSelectionItems() methods.
+   Keep only the final constructor-based implementation shown above.
+
+2. Do NOT use the earlier StationSelectionItem / CheckBox design.
+   Your existing project already has a working MultiSelectComboBox,
+   so use that same implementation.
+
+3. Keep:
+       Name = seriesName
+
+   because the legend needs the series name.
+
+4. Do NOT remove Name just to change tooltip content.
+
+5. Do NOT call LoadAsync() from station selection.
+
+6. Database calls happen only from Apply Filter / initial page load.
+
+7. If no station is selected, the implementation follows the same
+   usable behavior as the reference and displays all stations.
+
+8. The first four stations are selected after every new Apply Filter,
+   because the complete database result has changed.
+
+9. Station selection does not change the train/trip series. It only
+   changes which station positions are visible inside every stacked
+   series.
+
+10. If your project already contains another PassengerCountStackedPoint
+    class, do not create a second one. Keep only one definition.
