@@ -1,0 +1,1342 @@
+TIMS DATA INSIGHTS
+Station Time Series – Optimized Station Selection Implementation
+===============================================================
+
+PURPOSE
+-------
+This implementation uses the recommended hybrid Design 2:
+
+1. Date/Time + Corridor + Direction filters are applied only when the user
+   clicks the Apply Filter button.
+2. The database returns all station/passenger data for that filter.
+3. The complete result is cached in the ViewModel.
+4. The first 4 stations are selected by default.
+5. Station selection/unselection DOES NOT call the database.
+6. Station selection only rebuilds the LiveCharts presentation from the
+   already-loaded in-memory data.
+7. Only selected stations are rendered by LiveCharts.
+8. All stations remain available in the station selection list.
+9. When Apply Filter is clicked again, the database is queried once and
+   station selection is reset to the first 4 stations.
+10. The chart uses PassengerCountStackedPoint so Time/Train/Passenger Count
+    can be used for data labels and tooltip information.
+
+IMPORTANT ARCHITECTURE
+----------------------
+Database = dataset/filtering
+Station selection = presentation/filtering
+LiveCharts = presentation only
+
+FILES TO MODIFY
+---------------
+1. StationTimeWiseViewModel.cs
+2. StationTimeWiseViewPage.xaml
+   (Use your actual XAML file name if it is different.)
+
+NO DATABASE/REPOSITORY CHANGES ARE REQUIRED.
+
+
+===============================================================
+FILE 1: StationTimeWiseViewModel.cs
+===============================================================
+
+WHERE TO IMPLEMENT
+------------------
+Replace/update the existing StationTimeWiseViewModel.cs.
+
+The following code shows the complete relevant implementation. Keep your
+existing namespaces/usings that are required by the rest of your project.
+
+
+[1] ADD THESE PROPERTIES/FIELDS INSIDE StationTimeWiseViewModel
+---------------------------------------------------------------
+
+    // Stores all passenger data returned by the database.
+    // This is the cache used when the user selects/unselects stations.
+    // Station selection never calls the database.
+    private List<PassengerStationPoint> _PassengerPoints =
+        new List<PassengerStationPoint>();
+
+    // Stores ALL stations returned by the database.
+    // We keep all stations even though only four are selected by default.
+    private List<StationAxisItem> _AllStations =
+        new List<StationAxisItem>();
+
+    // Prevents the station selection PropertyChanged event from refreshing
+    // the chart while the selection list is initially being populated.
+    private bool _IsUpdatingStationSelection = false;
+
+    // Collection displayed by the station-selection ListBox.
+    private ObservableCollection<StationSelectionItem>
+        _StationSelectionItems =
+            new ObservableCollection<StationSelectionItem>();
+
+    public ObservableCollection<StationSelectionItem>
+        StationSelectionItems
+    {
+        get => _StationSelectionItems;
+        set
+        {
+            RaisePropertyChanged(
+                ref _StationSelectionItems,
+                value,
+                nameof(StationSelectionItems));
+        }
+    }
+
+
+[2] INITIALIZE THE STATION SELECTION COLLECTION
+------------------------------------------------
+
+Inside your existing InitializeFields() method, add:
+
+    StationSelectionItems =
+        new ObservableCollection<StationSelectionItem>();
+
+Example:
+
+    private void InitializeFields()
+    {
+        ShowBusyCursor = true;
+
+        _foreignServerDataMapper =
+            new HMRCForeignServerDataMapper(
+                new SQLDBInteraction());
+
+        _UplineMode = true;
+        _DownlineMode = false;
+
+        _Corridors =
+            new ObservableCollection<string>();
+
+        // Initialize station selection list.
+        StationSelectionItems =
+            new ObservableCollection<StationSelectionItem>();
+
+        ShowBusyCursor = false;
+    }
+
+
+[3] MODIFY LoadAsync()
+----------------------
+
+IMPORTANT:
+LoadAsync() is the ONLY place that loads passenger/station data from
+the database.
+
+Replace your existing LoadAsync() with:
+
+    public void LoadAsync()
+    {
+        ShowBusyCursor = true;
+
+        try
+        {
+            // Direction mode:
+            // Upline = 0
+            // Downline = 1
+            int directionMode = UplineMode ? 0 : 1;
+
+            int corridor =
+                CorridorsFilterSelectedIndex + 1;
+
+            // ------------------------------------------------------------
+            // 1. GET ALL STATION AXIS DATA FROM DATABASE
+            // ------------------------------------------------------------
+            DataTable stationAxisTable =
+                _foreignServerDataMapper.GetStationAxisAsync(
+                    corridor,
+                    directionMode);
+
+            // ------------------------------------------------------------
+            // 2. GET ALL PASSENGER DATA FROM DATABASE
+            // ------------------------------------------------------------
+            DataTable passengerDataTable =
+                _foreignServerDataMapper.GetPassengerGraphDataAsync(
+                    FromDateTime,
+                    ToDateTime,
+                    corridor,
+                    directionMode);
+
+            // ------------------------------------------------------------
+            // 3. CONVERT STATION DATA
+            // ------------------------------------------------------------
+            var stations =
+                new List<StationAxisItem>();
+
+            foreach (DataRow row in stationAxisTable.Rows)
+            {
+                stations.Add(
+                    new StationAxisItem
+                    {
+                        StationIndex =
+                            Convert.ToInt32(
+                                row["StationIndex"]),
+
+                        StationName =
+                            row["StationName"]?.ToString()
+                            ?? string.Empty
+                    });
+            }
+
+            // ------------------------------------------------------------
+            // 4. CONVERT PASSENGER DATA
+            // ------------------------------------------------------------
+            var points =
+                new List<PassengerStationPoint>();
+
+            foreach (DataRow row in passengerDataTable.Rows)
+            {
+                points.Add(
+                    new PassengerStationPoint
+                    {
+                        TrainNo =
+                            row["TrainNo"]?.ToString()
+                            ?? string.Empty,
+
+                        TripId =
+                            Convert.ToInt32(
+                                row["TripId"]),
+
+                        StationIndex =
+                            Convert.ToInt32(
+                                row["StationIndex"]),
+
+                        CurrentStation =
+                            row["CurrentStation"]?.ToString()
+                            ?? string.Empty,
+
+                        NextStation =
+                            row["NextStation"]?.ToString()
+                            ?? string.Empty,
+
+                        DDateTime =
+                            Convert.ToDateTime(
+                                row["DDateTime"]),
+
+                        TotalPassenger =
+                            Convert.ToInt32(
+                                row["TotalPassenger"])
+                    });
+            }
+
+            // ------------------------------------------------------------
+            // 5. CACHE DATABASE RESULT
+            // ------------------------------------------------------------
+            // From this point station selection does NOT access database.
+            _AllStations =
+                stations
+                    .OrderBy(x => x.StationIndex)
+                    .ToList();
+
+            _PassengerPoints = points;
+
+            // Keep existing property if your UI uses AllStations.
+            AllStations =
+                _AllStations
+                    .Select(x => x.StationName)
+                    .ToList();
+
+            RaisePropertyChanged(nameof(AllStations));
+
+            // ------------------------------------------------------------
+            // 6. CREATE STATION CHECKBOX/LIST
+            // ------------------------------------------------------------
+            // First four stations are selected by default.
+            BuildStationSelectionList(_AllStations);
+
+            // ------------------------------------------------------------
+            // 7. RENDER ONLY SELECTED STATIONS
+            // ------------------------------------------------------------
+            RefreshStationChart();
+        }
+        catch (OperationCanceledException)
+        {
+            // Keep your existing cancellation handling if required.
+        }
+        catch (Exception ex)
+        {
+            // Keep your existing logging/status handling here.
+            // Example:
+            // Status = "Error: " + ex.Message;
+        }
+        finally
+        {
+            ShowBusyCursor = false;
+        }
+    }
+
+
+[4] ADD BuildStationSelectionList()
+-----------------------------------
+
+Add this method inside StationTimeWiseViewModel:
+
+    /// <summary>
+    /// Creates the station selection list after database data is loaded.
+    /// The first four stations are selected by default.
+    ///
+    /// IMPORTANT:
+    /// This method is called after Apply Filter/database loading.
+    /// It is NOT called every time a checkbox changes.
+    /// </summary>
+    private void BuildStationSelectionList(
+        List<StationAxisItem> stations)
+    {
+        _IsUpdatingStationSelection = true;
+
+        try
+        {
+            // Remove old station selections when a new Apply operation
+            // loads a completely new dataset.
+            StationSelectionItems.Clear();
+
+            var orderedStations =
+                stations
+                    .OrderBy(x => x.StationIndex)
+                    .ToList();
+
+            for (int i = 0;
+                 i < orderedStations.Count;
+                 i++)
+            {
+                var station =
+                    orderedStations[i];
+
+                var item =
+                    new StationSelectionItem
+                    {
+                        StationIndex =
+                            station.StationIndex,
+
+                        StationName =
+                            station.StationName,
+
+                        // Default selection:
+                        // first four stations only.
+                        IsSelected = i < 4
+                    };
+
+                // Listen for checkbox changes.
+                item.PropertyChanged +=
+                    StationSelectionItem_PropertyChanged;
+
+                StationSelectionItems.Add(item);
+            }
+        }
+        finally
+        {
+            _IsUpdatingStationSelection = false;
+        }
+    }
+
+
+[5] ADD STATION SELECTION EVENT
+--------------------------------
+
+Add:
+
+    /// <summary>
+    /// Called when the user checks/unchecks a station.
+    ///
+    /// IMPORTANT:
+    /// No database call is performed here.
+    /// The chart is rebuilt only from cached data.
+    /// </summary>
+    private void StationSelectionItem_PropertyChanged(
+        object sender,
+        PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName !=
+            nameof(StationSelectionItem.IsSelected))
+        {
+            return;
+        }
+
+        // Ignore events generated while the initial station list
+        // is being populated.
+        if (_IsUpdatingStationSelection)
+        {
+            return;
+        }
+
+        // Re-render from cached data only.
+        RefreshStationChart();
+    }
+
+
+[6] ADD GetSelectedStations()
+--------------------------------
+
+    /// <summary>
+    /// Returns only stations currently selected by the user.
+    /// No database access.
+    /// </summary>
+    private List<StationAxisItem>
+        GetSelectedStations()
+    {
+        var selectedIndexes =
+            StationSelectionItems
+                .Where(x => x.IsSelected)
+                .Select(x => x.StationIndex)
+                .ToHashSet();
+
+        return _AllStations
+            .Where(x =>
+                selectedIndexes.Contains(
+                    x.StationIndex))
+            .OrderBy(x => x.StationIndex)
+            .ToList();
+    }
+
+
+[7] ADD RefreshStationChart()
+-----------------------------
+
+    /// <summary>
+    /// Rebuilds the chart using the cached database data.
+    ///
+    /// This method is called when:
+    /// 1. Initial data load completes.
+    /// 2. User selects a station.
+    /// 3. User unselects a station.
+    ///
+    /// No database query is performed here.
+    /// </summary>
+    private void RefreshStationChart()
+    {
+        if (_AllStations == null ||
+            _AllStations.Count == 0)
+        {
+            Series = Array.Empty<ISeries>();
+            return;
+        }
+
+        var selectedStations =
+            GetSelectedStations();
+
+        // Rebuild X-axis using only selected stations.
+        BuildAxis(selectedStations);
+
+        // Rebuild chart values using only selected stations.
+        BuildStackedSeries(
+            _PassengerPoints,
+            selectedStations);
+
+        // Keep AllStations as the complete station list.
+        // It is not changed when the user checks/unchecks stations.
+        AllStations =
+            _AllStations
+                .Select(x => x.StationName)
+                .ToList();
+
+        RaisePropertyChanged(nameof(AllStations));
+    }
+
+
+[8] REPLACE BuildAxis()
+-----------------------
+
+    /// <summary>
+    /// Builds the X/Y axes for the currently selected stations.
+    /// </summary>
+    private void BuildAxis(
+        List<StationAxisItem> stations)
+    {
+        var orderedStations =
+            stations
+                .OrderBy(x => x.StationIndex)
+                .ToList();
+
+        XAxes =
+            new Axis[]
+            {
+                new Axis
+                {
+                    Name = "Stations",
+
+                    Labels =
+                        orderedStations
+                            .Select(x =>
+                                x.StationName)
+                            .ToArray(),
+
+                    LabelsRotation = 90,
+
+                    TextSize = 10,
+
+                    MinStep = 1,
+
+                    UnitWidth = 1,
+
+                    ForceStepToMin = true,
+
+                    SeparatorsPaint =
+                        new SolidColorPaint(
+                            new SKColor(
+                                225,
+                                225,
+                                225))
+                }
+            };
+
+        YAxes =
+            new Axis[]
+            {
+                new Axis
+                {
+                    Name =
+                        "Passenger Count",
+
+                    MinLimit = 0,
+
+                    TextSize = 13,
+
+                    SeparatorsPaint =
+                        new SolidColorPaint(
+                            new SKColor(
+                                225,
+                                225,
+                                225))
+                }
+            };
+    }
+
+
+[9] REPLACE BuildStackedSeries()
+--------------------------------
+
+IMPORTANT:
+This version uses the selected stations only.
+The database data remains cached in _PassengerPoints.
+
+The dictionary lookup avoids repeated FirstOrDefault() searches and is
+more efficient when there are many stations/trains.
+
+    /// <summary>
+    /// Creates LiveCharts stacked column series from cached passenger data.
+    ///
+    /// Each series = one Train/Trip.
+    /// Each X position = one selected Station.
+    /// Y value = Passenger Count.
+    ///
+    /// No database call is performed.
+    /// </summary>
+    private void BuildStackedSeries(
+        List<PassengerStationPoint> points,
+        List<StationAxisItem> selectedStations)
+    {
+        var series =
+            new List<ISeries>();
+
+        var stationList =
+            selectedStations
+                .OrderBy(x => x.StationIndex)
+                .ToList();
+
+        if (stationList.Count == 0)
+        {
+            Series =
+                Array.Empty<ISeries>();
+
+            return;
+        }
+
+        // Group cached data by Train + Trip.
+        var groups =
+            points
+                .GroupBy(x => new
+                {
+                    x.TrainNo,
+                    x.TripId
+                })
+                .OrderBy(x =>
+                    x.Min(y => y.DDateTime))
+                .ToList();
+
+        var palette = GetPalette();
+
+        int colorIndex = 0;
+
+        foreach (var group in groups)
+        {
+            string trainNo =
+                group.Key.TrainNo;
+
+            DateTime time =
+                group.Min(x => x.DDateTime);
+
+            // This Name is used by the Legend.
+            // DO NOT remove it if the legend needs the train/time.
+            string seriesName =
+                $"{time:HH:mm} {trainNo}";
+
+            // Create fast StationIndex -> passenger data lookup.
+            var stationLookup =
+                group
+                    .GroupBy(x =>
+                        x.StationIndex)
+                    .ToDictionary(
+                        g => g.Key,
+                        g => g.First());
+
+            var values =
+                new List<
+                    PassengerCountStackedPoint>();
+
+            foreach (var station in stationList)
+            {
+                if (stationLookup.TryGetValue(
+                        station.StationIndex,
+                        out var data))
+                {
+                    values.Add(
+                        new PassengerCountStackedPoint
+                        {
+                            StationIndex =
+                                station.StationIndex,
+
+                            StationName =
+                                station.StationName,
+
+                            TrainNo =
+                                trainNo,
+
+                            DDateTime =
+                                data.DDateTime,
+
+                            PassengerCount =
+                                data.TotalPassenger
+                        });
+                }
+                else
+                {
+                    // If this train has no data for the selected station,
+                    // create a zero value so the station position remains
+                    // aligned with the X-axis.
+                    values.Add(
+                        new PassengerCountStackedPoint
+                        {
+                            StationIndex =
+                                station.StationIndex,
+
+                            StationName =
+                                station.StationName,
+
+                            TrainNo =
+                                trainNo,
+
+                            DDateTime =
+                                time,
+
+                            PassengerCount = 0
+                        });
+                }
+            }
+
+            var columnSeries =
+                new StackedColumnSeries<
+                    PassengerCountStackedPoint>
+                {
+                    // Required for the Legend.
+                    Name = seriesName,
+
+                    Values = values,
+
+                    // IMPORTANT:
+                    // Use array index as X coordinate.
+                    // This is necessary when stations are dynamically
+                    // selected, because selected station positions become
+                    // 0,1,2,3,... even if the original StationIndex values
+                    // were 1,3,7,10,...
+                    Mapping = (point, index) =>
+                        new Coordinate(
+                            index,
+                            point.PassengerCount),
+
+                    Fill =
+                        new SolidColorPaint(
+                            palette[
+                                colorIndex %
+                                palette.Count]),
+
+                    Stroke = null,
+
+                    MaxBarWidth = 100,
+
+                    DataLabelsPaint =
+                        new SolidColorPaint(
+                            SKColors.White),
+
+                    DataLabelsSize = 11,
+
+                    // Text displayed inside each stacked segment.
+                    DataLabelsFormatter = point =>
+                    {
+                        if (point.Model
+                            is PassengerCountStackedPoint data)
+                        {
+                            if (data.PassengerCount <= 0)
+                            {
+                                return string.Empty;
+                            }
+
+                            return
+                                $"{data.DDateTime:HH:mm} " +
+                                $"{data.TrainNo} " +
+                                $"{data.PassengerCount}";
+                        }
+
+                        return string.Empty;
+                    },
+
+                    // X-axis tooltip text.
+                    XToolTipLabelFormatter = point =>
+                    {
+                        if (point.Model
+                            is PassengerCountStackedPoint data)
+                        {
+                            return data.StationName;
+                        }
+
+                        return string.Empty;
+                    },
+
+                    // Y-axis tooltip text.
+                    YToolTipLabelFormatter = point =>
+                    {
+                        if (point.Model
+                            is PassengerCountStackedPoint data)
+                        {
+                            return
+                                $"Time: {data.DDateTime:HH:mm}\n" +
+                                $"Train: {data.TrainNo}\n" +
+                                $"Passengers: " +
+                                $"{data.PassengerCount}";
+                        }
+
+                        return string.Empty;
+                    }
+                };
+
+            series.Add(columnSeries);
+
+            colorIndex++;
+        }
+
+        Series =
+            series.ToArray();
+    }
+
+
+[10] ADD/REPLACE GetPalette()
+----------------------------
+
+Recommended professional palette for the passenger chart.
+These colors are darker/more controlled than the original Red/Blue/Green/
+Orange/Yellow combination and work better with white data labels.
+
+    private List<SKColor> GetPalette()
+    {
+        return new List<SKColor>
+        {
+            SKColor.Parse("#2563EB"), // Blue
+            SKColor.Parse("#0F766E"), // Teal
+            SKColor.Parse("#4338CA"), // Indigo
+            SKColor.Parse("#15803D"), // Green
+            SKColor.Parse("#7E22CE"), // Purple
+            SKColor.Parse("#C2410C"), // Orange
+            SKColor.Parse("#BE185D"), // Pink
+            SKColor.Parse("#0369A1"), // Ocean Blue
+            SKColor.Parse("#6D28D9"), // Violet
+            SKColor.Parse("#166534"), // Forest Green
+
+            SKColor.Parse("#B45309"), // Amber
+            SKColor.Parse("#9F1239"), // Rose
+            SKColor.Parse("#334155"), // Slate
+            SKColor.Parse("#1E3A8A"), // Navy
+            SKColor.Parse("#115E59"), // Dark Teal
+
+            SKColor.Parse("#7C3AED"), // Purple
+            SKColor.Parse("#9A3412"), // Dark Orange
+            SKColor.Parse("#881337"), // Dark Pink
+            SKColor.Parse("#312E81"), // Dark Indigo
+            SKColor.Parse("#164E63"), // Dark Cyan
+
+            SKColor.Parse("#3F3F46"), // Charcoal
+            SKColor.Parse("#475569"), // Gray/Slate
+            SKColor.Parse("#4C1D95"), // Dark Violet
+            SKColor.Parse("#134E4A"), // Deep Teal
+            SKColor.Parse("#365314"), // Olive Green
+            SKColor.Parse("#78350F"), // Brown
+            SKColor.Parse("#7F1D1D"), // Dark Red
+            SKColor.Parse("#1E1B4B"), // Deep Indigo
+            SKColor.Parse("#1E293B"), // Deep Slate
+            SKColor.Parse("#44403C")  // Warm Gray
+        };
+    }
+
+
+[11] PassengerCountStackedPoint CLASS
+--------------------------------------
+
+Keep this class in StationTimeWiseViewModel.cs if it is currently there,
+or place it in your existing model/custom-data-types location if that is
+how your project is organized.
+
+    public class PassengerCountStackedPoint
+    {
+        public int StationIndex { get; set; }
+
+        public string StationName { get; set; }
+
+        public string TrainNo { get; set; }
+
+        public DateTime DDateTime { get; set; }
+
+        public double PassengerCount { get; set; }
+    }
+
+
+[12] ADD StationSelectionItem CLASS
+------------------------------------
+
+Place this class outside StationTimeWiseViewModel, normally at the bottom
+of StationTimeWiseViewModel.cs, OR move it to a separate file if preferred.
+
+    /// <summary>
+    /// Represents one station in the station-selection UI.
+    /// IsSelected controls whether that station is rendered in the chart.
+    /// </summary>
+    public class StationSelectionItem :
+        INotifyPropertyChanged
+    {
+        private bool _IsSelected;
+
+        public int StationIndex { get; set; }
+
+        public string StationName { get; set; }
+
+        public bool IsSelected
+        {
+            get => _IsSelected;
+
+            set
+            {
+                if (_IsSelected == value)
+                {
+                    return;
+                }
+
+                _IsSelected = value;
+
+                PropertyChanged?.Invoke(
+                    this,
+                    new PropertyChangedEventArgs(
+                        nameof(IsSelected)));
+            }
+        }
+
+        public event PropertyChangedEventHandler
+            PropertyChanged;
+    }
+
+
+===============================================================
+FILE 2: StationTimeWiseViewPage.xaml
+===============================================================
+
+WHERE TO IMPLEMENT
+------------------
+Use your actual Station Time Series page XAML file.
+
+Your existing CartesianChart can remain almost unchanged.
+
+CURRENT CHART:
+--------------
+
+    <lvc:CartesianChart Grid.Row="1"
+                        x:Name="StationSeriesChart"
+                        Series="{Binding Series, Mode=TwoWay}"
+                        XAxes="{Binding XAxes, Mode=TwoWay}"
+                        YAxes="{Binding YAxes, Mode=TwoWay}"
+                        TooltipFindingStrategy="CompareAllTakeClosest"
+                        TooltipPosition="Top"
+                        DrawMarginFrame="{Binding DrawMarginTimeSeriesFrame}">
+    </lvc:CartesianChart>
+
+You can keep the existing chart binding.
+
+
+---------------------------------------------------------------
+ADD STATION SELECTION UI
+---------------------------------------------------------------
+
+Place this ListBox near the chart/filter area.
+
+For example, put it above the CartesianChart or inside the filter panel.
+
+    <Border
+        Background="White"
+        BorderBrush="#E2E8F0"
+        BorderThickness="1"
+        CornerRadius="6"
+        Padding="8"
+        Margin="0,0,0,8">
+
+        <StackPanel>
+
+            <TextBlock
+                Text="Stations"
+                FontWeight="SemiBold"
+                FontSize="13"
+                Margin="2,0,0,6"/>
+
+            <ScrollViewer
+                MaxHeight="150"
+                VerticalScrollBarVisibility="Auto">
+
+                <ListBox
+                    ItemsSource="{Binding StationSelectionItems}"
+                    BorderThickness="0"
+                    Background="Transparent">
+
+                    <ListBox.ItemTemplate>
+
+                        <DataTemplate>
+
+                            <CheckBox
+                                Content="{Binding StationName}"
+                                IsChecked="{Binding IsSelected,
+                                            Mode=TwoWay,
+                                            UpdateSourceTrigger=PropertyChanged}"
+                                Margin="3,2"
+                                FontSize="12"/>
+
+                        </DataTemplate>
+
+                    </ListBox.ItemTemplate>
+
+                </ListBox>
+
+            </ScrollViewer>
+
+        </StackPanel>
+
+    </Border>
+
+
+---------------------------------------------------------------
+EXAMPLE FINAL PAGE STRUCTURE
+---------------------------------------------------------------
+
+The intended UI flow is:
+
+    Date & Time Range
+    Corridor
+    Direction
+    Apply Filter
+            |
+            V
+    Station Selection
+    [x] Station 1
+    [x] Station 2
+    [x] Station 3
+    [x] Station 4
+    [ ] Station 5
+    [ ] Station 6
+    [ ] Station 7
+            |
+            V
+    Stacked Column Chart
+
+
+---------------------------------------------------------------
+IMPORTANT XAML NOTE
+---------------------------------------------------------------
+
+Do NOT put the station selection ListBox inside a control that is recreated
+or replaced whenever Series changes.
+
+StationSelectionItems is independent of Series.
+
+The ListBox should stay visible while Series/XAxes are refreshed.
+
+
+===============================================================
+FILE 3: OPTIONAL – SEPARATE StationSelectionItem.cs
+===============================================================
+
+RECOMMENDED if you want clean project structure.
+
+Create:
+
+    StationSelectionItem.cs
+
+Code:
+
+    using System.ComponentModel;
+
+    namespace TIMSDataInsights.ViewModels
+    {
+        /// <summary>
+        /// Station selection model used by the station-selection ListBox.
+        /// </summary>
+        public class StationSelectionItem :
+            INotifyPropertyChanged
+        {
+            private bool _IsSelected;
+
+            public int StationIndex { get; set; }
+
+            public string StationName { get; set; }
+
+            public bool IsSelected
+            {
+                get => _IsSelected;
+
+                set
+                {
+                    if (_IsSelected == value)
+                    {
+                        return;
+                    }
+
+                    _IsSelected = value;
+
+                    PropertyChanged?.Invoke(
+                        this,
+                        new PropertyChangedEventArgs(
+                            nameof(IsSelected)));
+                }
+            }
+
+            public event PropertyChangedEventHandler
+                PropertyChanged;
+        }
+    }
+
+If this separate file is created, remove the same class from
+StationTimeWiseViewModel.cs to avoid duplicate class definitions.
+
+
+===============================================================
+APPLY FILTER BEHAVIOR
+===============================================================
+
+Keep your existing command:
+
+    private void ApplyButtonEvent(object obj)
+    {
+        LoadAsync();
+    }
+
+This is correct.
+
+Apply button:
+    -> database query
+    -> cache complete result
+    -> rebuild station selection
+    -> select first 4
+    -> render chart
+
+
+Station checkbox:
+    -> NO database query
+    -> use _PassengerPoints
+    -> rebuild chart
+    -> render selected stations
+
+
+===============================================================
+IMPORTANT BEHAVIOR AFTER APPLY
+===============================================================
+
+Example:
+
+Initial database result:
+
+    Station 1
+    Station 2
+    Station 3
+    Station 4
+    Station 5
+    Station 6
+    Station 7
+    Station 8
+
+Default:
+
+    [x] Station 1
+    [x] Station 2
+    [x] Station 3
+    [x] Station 4
+    [ ] Station 5
+    [ ] Station 6
+    [ ] Station 7
+    [ ] Station 8
+
+Chart:
+
+    Station 1 | Station 2 | Station 3 | Station 4
+
+
+User checks Station 7:
+
+    [x] Station 1
+    [x] Station 2
+    [x] Station 3
+    [x] Station 4
+    [ ] Station 5
+    [ ] Station 6
+    [x] Station 7
+    [ ] Station 8
+
+Chart:
+
+    Station 1 | Station 2 | Station 3 | Station 4 | Station 7
+
+No database query occurs.
+
+
+===============================================================
+WHY WE DO NOT CREATE ALL STATION SERIES AND HIDE THEM
+===============================================================
+
+Your chart has:
+
+    Series = Train/Trip
+    X-axis = Station
+
+Therefore:
+
+    Series 1 = Train TS023
+    Series 2 = Train TS025
+    Series 3 = Train TS032
+
+Each series contains multiple station values.
+
+For example:
+
+    TS023:
+        Station 1 = 178
+        Station 2 = 203
+        Station 3 = 272
+        Station 4 = 184
+
+Because station is an X position inside every train series, hiding one
+station is not equivalent to hiding one LiveCharts series.
+
+Therefore the recommended approach is:
+
+    Keep raw database data cached.
+    Rebuild only the selected station values.
+
+This is much cleaner than trying to manipulate individual station
+visibility inside every train series.
+
+
+===============================================================
+PERFORMANCE OPTIMIZATION
+===============================================================
+
+The implementation intentionally avoids:
+
+    stationList.Select(...)
+        -> group.FirstOrDefault(...)
+
+for every station.
+
+Instead it creates:
+
+    stationLookup = group.ToDictionary(...)
+
+Then:
+
+    stationLookup.TryGetValue(...)
+
+This reduces repeated searches and becomes important when many train/station
+records are loaded.
+
+
+===============================================================
+LIVECHARTS CUSTOM MODEL MAPPING
+===============================================================
+
+Because PassengerCountStackedPoint is a custom model, the series explicitly
+maps:
+
+    X = array index
+    Y = PassengerCount
+
+using:
+
+    Mapping = (point, index) =>
+        new Coordinate(
+            index,
+            point.PassengerCount)
+
+DO NOT map X directly to StationIndex when stations can be selected/deselected.
+
+Example selected stations:
+
+    StationIndex 1
+    StationIndex 3
+    StationIndex 7
+    StationIndex 10
+
+LiveCharts X positions should be:
+
+    0
+    1
+    2
+    3
+
+The Labels array is created in the same selected-station order, so the
+bars and station names remain aligned.
+
+
+===============================================================
+LEGEND AND TOOLTIP
+===============================================================
+
+Keep:
+
+    Name = seriesName;
+
+because this is used by the legend.
+
+Example legend:
+
+    07:12 TS023
+    07:18 TS025
+    07:25 TS032
+
+Do NOT remove Name just to remove the name from the tooltip.
+
+Use:
+
+    XToolTipLabelFormatter
+
+and
+
+    YToolTipLabelFormatter
+
+for the custom point information.
+
+
+===============================================================
+IMPORTANT TOOLTIP NOTE
+===============================================================
+
+Your existing XAML contains:
+
+    TooltipFindingStrategy="CompareAllTakeClosest"
+
+This can cause multiple train series to participate in the tooltip when
+hovering over one station.
+
+If the desired final behavior is to show only the exact hovered train/bar,
+this property may need to be changed depending on the LiveChartsCore
+version used by your application.
+
+Do not change it blindly.
+
+First implement the station-selection architecture and verify the chart.
+Then adjust tooltip finding behavior if required.
+
+
+===============================================================
+EXPECTED FINAL RESULT
+===============================================================
+
+1. User opens Station Time Series page.
+2. Initial/default filters are loaded.
+3. User clicks Apply Filter.
+4. One database query is executed.
+5. All station/passenger data is cached.
+6. First four stations are selected.
+7. Chart renders only four stations.
+8. User selects another station.
+9. No database call.
+10. Cached data is filtered locally.
+11. Chart redraws with the newly selected station.
+12. User unselects a station.
+13. No database call.
+14. Chart redraws immediately.
+15. User changes Date/Time/Corridor/Direction.
+16. User clicks Apply Filter.
+17. Database is queried again for the new filter.
+18. Cache is replaced with the new dataset.
+19. First four stations are selected again.
+20. Chart is rebuilt.
+
+
+===============================================================
+DO NOT DO THESE
+===============================================================
+
+1. Do not call the database from StationSelectionItem_PropertyChanged().
+2. Do not call GetPassengerGraphDataAsync() when a station checkbox changes.
+3. Do not create a database request for every station selection.
+4. Do not remove the series Name if the legend needs it.
+5. Do not use StationIndex directly as the X coordinate when selected
+   stations can have gaps.
+6. Do not recreate the entire station selection list on every checkbox change.
+7. Do not create one LiveCharts series per station; your chart design uses
+   one series per train/trip.
+
+
+===============================================================
+SUMMARY OF FILE CHANGES
+===============================================================
+
+FILE 1:
+    StationTimeWiseViewModel.cs
+
+Add:
+    _PassengerPoints
+    _AllStations
+    _IsUpdatingStationSelection
+    StationSelectionItems
+
+Add/update:
+    InitializeFields()
+    LoadAsync()
+    BuildStationSelectionList()
+    StationSelectionItem_PropertyChanged()
+    GetSelectedStations()
+    RefreshStationChart()
+    BuildAxis()
+    BuildStackedSeries()
+    GetPalette()
+
+Keep:
+    PassengerCountStackedPoint
+
+
+FILE 2:
+    StationTimeWiseViewPage.xaml
+
+Keep:
+    CartesianChart bindings
+
+Add:
+    Station selection ListBox bound to:
+        StationSelectionItems
+
+Checkbox:
+    IsChecked="{Binding IsSelected, Mode=TwoWay}"
+
+
+FILE 3 (OPTIONAL):
+    StationSelectionItem.cs
+
+Move StationSelectionItem class here if you prefer a separate model file.
+
+
+FINAL DESIGN:
+    Database = Apply Filter
+    Cache = ViewModel
+    Station selection = local
+    LiveCharts = selected presentation
